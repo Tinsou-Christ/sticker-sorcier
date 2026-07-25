@@ -1,7 +1,11 @@
 import logging
 import os
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# le code du bot vit dans le dossier stickerbot/
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stickerbot'))
 
 import config
 
