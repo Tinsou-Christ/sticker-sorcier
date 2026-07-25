@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: stickers-bot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMINS
+        sync: false
+      - key: CREATOR_URL
+        value: https://t.me/Shadow_sekai
+      - key: CHANNEL_URL
+        value: https://t.me/Shadow_sekai
+      - key: GROUP_URL
+        value: https://t.me/Shadow_sekai
+      - key: DB_PATH
+        value: /var/data/bot.db
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
