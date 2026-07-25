@@ -9,7 +9,9 @@ RUN apt-get update && \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY main.py ./
+COPY stickerbot ./stickerbot
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/usr/src/app/stickerbot
 CMD ["python", "main.py"]
