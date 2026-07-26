@@ -43,6 +43,15 @@ def init():
             CREATE INDEX IF NOT EXISTS idx_packs_user ON packs (user_id);
             """
         )
+        # migrations : forme du sticker + ecriture (watermark) par pack
+        for column, ddl in (
+            ('shape', "ALTER TABLE packs ADD COLUMN shape TEXT NOT NULL DEFAULT 'original'"),
+            ('watermark', "ALTER TABLE packs ADD COLUMN watermark TEXT NOT NULL DEFAULT ''"),
+        ):
+            try:
+                _conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # colonne deja presente
         _conn.commit()
 
 
@@ -85,11 +94,16 @@ def all_user_ids():
 
 # ---------- packs ----------
 
-def add_pack(user_id: int, name: str, title: str) -> int:
+def add_pack(user_id: int, name: str, title: str, shape: str = 'original', watermark: str = '') -> int:
     return _exec(
-        'INSERT INTO packs (user_id, name, title, created_at) VALUES (?, ?, ?, ?)',
-        (user_id, name, title, int(time.time())),
+        'INSERT INTO packs (user_id, name, title, shape, watermark, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?)',
+        (user_id, name, title, shape, watermark or '', int(time.time())),
     )
+
+
+def set_pack_style(pack_id: int, shape: str, watermark: str):
+    _exec('UPDATE packs SET shape = ?, watermark = ? WHERE id = ?', (shape, watermark or '', pack_id))
 
 
 def get_pack(user_id: int, name: str):

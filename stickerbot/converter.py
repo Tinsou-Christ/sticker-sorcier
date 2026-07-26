@@ -1,4 +1,8 @@
-"""Conversion des medias vers les formats acceptes par Telegram / WhatsApp."""
+"""Conversion des medias vers les formats acceptes par Telegram / WhatsApp.
+
+Gere aussi la forme du sticker (original / carre / rond) et l'ecriture
+(watermark) ajoutee en bas a droite.
+"""
 
 import logging
 import os
@@ -6,13 +10,41 @@ import subprocess
 import tempfile
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
 STICKER_SIZE = 512
 VIDEO_MAX_SECONDS = 3
 VIDEO_MAX_BYTES = 256 * 1024
+
+SHAPE_ORIGINAL = 'original'
+SHAPE_SQUARE = 'square'
+SHAPE_ROUND = 'round'
+
+FONT_CANDIDATES = (
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+    '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+)
+
+
+def font_path() -> str:
+    for path in FONT_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return ''
+
+
+def _load_font(size: int):
+    path = font_path()
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            pass
+    return ImageFont.load_default()
 
 
 def _run(args):
@@ -21,26 +53,170 @@ def _run(args):
         raise RuntimeError(proc.stderr.decode('utf-8', 'ignore')[-400:])
 
 
-def image_to_webp(data: bytes) -> bytes:
-    """redimensionne une image pour en faire un sticker statique 512px webp"""
+# --------------------------------------------------------------------------
+# helpers image
+# --------------------------------------------------------------------------
+
+def _fit_original(im: Image.Image) -> Image.Image:
+    ratio = STICKER_SIZE / max(im.width, im.height)
+    new_size = (max(1, round(im.width * ratio)), max(1, round(im.height * ratio)))
+    im = im.resize(new_size, Image.LANCZOS)
+    if im.width != STICKER_SIZE and im.height != STICKER_SIZE:
+        im = im.resize((STICKER_SIZE, STICKER_SIZE), Image.LANCZOS)
+    return im
+
+
+def _fit_square(im: Image.Image) -> Image.Image:
+    """place l'image entiere dans un carre 512x512 transparent"""
+    ratio = min(STICKER_SIZE / im.width, STICKER_SIZE / im.height)
+    new_size = (max(1, round(im.width * ratio)), max(1, round(im.height * ratio)))
+    im = im.resize(new_size, Image.LANCZOS)
+    canvas = Image.new('RGBA', (STICKER_SIZE, STICKER_SIZE), (0, 0, 0, 0))
+    canvas.paste(im, ((STICKER_SIZE - im.width) // 2, (STICKER_SIZE - im.height) // 2), im)
+    return canvas
+
+
+def circle_mask(size: int = STICKER_SIZE) -> Image.Image:
+    mask = Image.new('L', (size * 4, size * 4), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size * 4 - 1, size * 4 - 1), fill=255)
+    return mask.resize((size, size), Image.LANCZOS)
+
+
+def _fit_round(im: Image.Image) -> Image.Image:
+    """remplit un cercle : on recadre au centre puis on applique un masque rond"""
+    ratio = max(STICKER_SIZE / im.width, STICKER_SIZE / im.height)
+    im = im.resize(
+        (max(1, round(im.width * ratio)), max(1, round(im.height * ratio))), Image.LANCZOS
+    )
+    left = (im.width - STICKER_SIZE) // 2
+    top = (im.height - STICKER_SIZE) // 2
+    im = im.crop((left, top, left + STICKER_SIZE, top + STICKER_SIZE))
+
+    mask = circle_mask(STICKER_SIZE)
+    out = Image.new('RGBA', (STICKER_SIZE, STICKER_SIZE), (0, 0, 0, 0))
+    out.paste(im, (0, 0), mask)
+    return out
+
+
+def _apply_shape(im: Image.Image, shape: str) -> Image.Image:
+    if shape == SHAPE_SQUARE:
+        return _fit_square(im)
+    if shape == SHAPE_ROUND:
+        return _fit_round(im)
+    return _fit_original(im)
+
+
+def draw_watermark(im: Image.Image, text: str) -> Image.Image:
+    """ecrit le texte en bas a droite du sticker"""
+    text = (text or '').strip()
+    if not text:
+        return im
+
+    im = im.convert('RGBA')
+    draw = ImageDraw.Draw(im)
+    size = max(18, int(im.height * 0.09))
+    font = _load_font(size)
+
+    # reduit la police si le texte est trop large
+    for _ in range(12):
+        box = draw.textbbox((0, 0), text, font=font, stroke_width=2)
+        if box[2] - box[0] <= im.width * 0.92 or size <= 12:
+            break
+        size = int(size * 0.88)
+        font = _load_font(size)
+
+    box = draw.textbbox((0, 0), text, font=font, stroke_width=2)
+    margin = max(6, int(im.width * 0.03))
+    x = im.width - (box[2] - box[0]) - margin
+    y = im.height - (box[3] - box[1]) - margin
+    draw.text(
+        (x, y), text, font=font, fill=(255, 255, 255, 255),
+        stroke_width=max(2, size // 12), stroke_fill=(0, 0, 0, 220),
+    )
+    return im
+
+
+# --------------------------------------------------------------------------
+# images
+# --------------------------------------------------------------------------
+
+def image_to_webp(data: bytes, shape: str = SHAPE_ORIGINAL, watermark: str = '') -> bytes:
+    """transforme une image en sticker statique 512px webp"""
     im = Image.open(BytesIO(data))
     if im.mode != 'RGBA':
         im = im.convert('RGBA')
 
-    ratio = STICKER_SIZE / max(im.width, im.height)
-    new_size = (max(1, round(im.width * ratio)), max(1, round(im.height * ratio)))
-    im = im.resize(new_size, Image.LANCZOS)
-
-    # un cote au moins doit faire exactement 512px
-    if im.width != STICKER_SIZE and im.height != STICKER_SIZE:
-        im = im.resize((STICKER_SIZE, STICKER_SIZE), Image.LANCZOS)
+    im = _apply_shape(im, shape)
+    im = draw_watermark(im, watermark)
 
     out = BytesIO()
     im.save(out, 'WEBP', quality=90, method=6)
     return out.getvalue()
 
 
-def video_to_webm(data: bytes, suffix: str = '.mp4') -> bytes:
+# --------------------------------------------------------------------------
+# videos
+# --------------------------------------------------------------------------
+
+def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
+    """construit les arguments -filter_complex pour ffmpeg"""
+    steps = [f'scale={STICKER_SIZE}:{STICKER_SIZE}:force_original_aspect_ratio=decrease']
+
+    if shape == SHAPE_SQUARE:
+        steps.append(
+            f'pad={STICKER_SIZE}:{STICKER_SIZE}:(ow-iw)/2:(oh-ih)/2:color=#00000000'
+        )
+    elif shape == SHAPE_ROUND:
+        steps.append(
+            f'scale={STICKER_SIZE}:{STICKER_SIZE}:force_original_aspect_ratio=increase'
+        )
+        steps.append(f'crop={STICKER_SIZE}:{STICKER_SIZE}')
+
+    steps.append(f'fps={fps}')
+    steps.append('format=yuva420p')
+
+    inputs = []
+    chain = f'[0:v]{",".join(steps)}[v]'
+    last = '[v]'
+
+    if shape == SHAPE_ROUND:
+        mask_path = os.path.join(tmp, 'mask.png')
+        gray = circle_mask(STICKER_SIZE)
+        Image.merge('RGB', (gray, gray, gray)).save(mask_path)
+        inputs = ['-loop', '1', '-i', mask_path]
+        chain += (
+            f';[1:v]scale={STICKER_SIZE}:{STICKER_SIZE},format=gray[m]'
+            f';[v][m]alphamerge[vm]'
+        )
+        last = '[vm]'
+
+    text = (watermark or '').strip()
+    if text:
+        text_path = os.path.join(tmp, 'wm.txt')
+        with open(text_path, 'w', encoding='utf-8') as fh:
+            fh.write(text)
+        fsize = max(18, int(STICKER_SIZE * 0.09))
+        fontfile = font_path()
+        draw = (
+            f"drawtext=textfile='{text_path}'"
+            f':fontsize={fsize}:fontcolor=white'
+            f':borderw={max(2, fsize // 12)}:bordercolor=black@0.85'
+            f':x=w-tw-{int(STICKER_SIZE * 0.03)}:y=h-th-{int(STICKER_SIZE * 0.03)}'
+        )
+        if fontfile:
+            draw += f":fontfile='{fontfile}'"
+        chain += f';{last}{draw}[vw]'
+        last = '[vw]'
+
+    return inputs, chain, last
+
+
+def video_to_webm(
+    data: bytes,
+    suffix: str = '.mp4',
+    shape: str = SHAPE_ORIGINAL,
+    watermark: str = '',
+) -> bytes:
     """convertit une video / GIF en sticker video webm VP9 (512px, 3s max, 30fps)"""
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, 'in' + suffix)
@@ -48,16 +224,14 @@ def video_to_webm(data: bytes, suffix: str = '.mp4') -> bytes:
         with open(src, 'wb') as fh:
             fh.write(data)
 
-        vf = (
-            f'scale={STICKER_SIZE}:{STICKER_SIZE}:force_original_aspect_ratio=decrease,'
-            f'fps=30'
-        )
+        inputs, chain, last = _video_filters(tmp, shape, watermark, 30)
 
+        out = b''
         for crf in (32, 40, 50):
             _run([
                 'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-                '-t', str(VIDEO_MAX_SECONDS), '-i', src,
-                '-vf', vf,
+                '-t', str(VIDEO_MAX_SECONDS), '-i', src, *inputs,
+                '-filter_complex', chain, '-map', last,
                 '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', str(crf),
                 '-an', '-pix_fmt', 'yuva420p',
                 '-f', 'webm', dst,
@@ -68,26 +242,34 @@ def video_to_webm(data: bytes, suffix: str = '.mp4') -> bytes:
         return out
 
 
-def any_to_animated_webp(data: bytes, suffix: str) -> bytes:
+def any_to_animated_webp(
+    data: bytes,
+    suffix: str,
+    shape: str = SHAPE_ORIGINAL,
+    watermark: str = '',
+) -> bytes:
     """convertit une video/webm en webp anime (format attendu par WhatsApp)"""
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, 'in' + suffix)
         dst = os.path.join(tmp, 'out.webp')
         with open(src, 'wb') as fh:
             fh.write(data)
+
+        inputs, chain, last = _video_filters(tmp, shape, watermark, 15)
+
         _run([
             'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-            '-t', str(VIDEO_MAX_SECONDS), '-i', src,
-            '-vf', f'scale={STICKER_SIZE}:{STICKER_SIZE}:force_original_aspect_ratio=decrease,fps=15',
-            '-loop', '0', '-an', '-vsync', '0',
+            '-t', str(VIDEO_MAX_SECONDS), '-i', src, *inputs,
+            '-filter_complex', chain, '-map', last,
+            '-loop', '0', '-an', '-fps_mode', 'passthrough',
             '-c:v', 'libwebp', '-quality', '55', '-compression_level', '6',
             dst,
         ])
         return open(dst, 'rb').read()
 
 
-def to_wa_webp(data: bytes, suffix: str) -> bytes:
+def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark: str = '') -> bytes:
     """point d'entree unique pour WhatsApp : renvoie toujours du webp"""
     if suffix in ('.webm', '.mp4', '.gif'):
-        return any_to_animated_webp(data, suffix)
-    return image_to_webp(data)
+        return any_to_animated_webp(data, suffix, shape, watermark)
+    return image_to_webp(data, shape, watermark)

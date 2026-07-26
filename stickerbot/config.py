@@ -23,3 +23,9 @@ PORT = int(os.environ.get('PORT', '8080'))
 # limites
 MAX_STICKERS_PER_PACK = 120
 WA_STICKERS_PER_FILE = 30
+
+# performance / multi-utilisateurs
+CONCURRENT_UPDATES = int(os.environ.get('CONCURRENT_UPDATES', '256'))
+CONNECTION_POOL_SIZE = int(os.environ.get('CONNECTION_POOL_SIZE', '64'))
+MAX_PARALLEL_CONVERSIONS = int(os.environ.get('MAX_PARALLEL_CONVERSIONS', '3'))
+

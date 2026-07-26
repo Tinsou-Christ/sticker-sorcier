@@ -30,6 +30,37 @@ LINK_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{2,39}$')
 # etats de conversation (stockes dans user_data['step'])
 STEP_TITLE = 'title'
 STEP_LINK = 'link'
+STEP_SHAPE = 'shape'
+STEP_WM = 'watermark'
+
+# les conversions ffmpeg/PIL sont lourdes : on limite le nombre simultane
+# (mais on ne bloque JAMAIS la boucle d'evenements -> les autres users
+# continuent d'utiliser le bot pendant une conversion)
+_convert_sem = None
+_user_locks = {}
+
+
+def convert_semaphore() -> asyncio.Semaphore:
+    global _convert_sem
+    if _convert_sem is None:
+        _convert_sem = asyncio.Semaphore(config.MAX_PARALLEL_CONVERSIONS)
+    return _convert_sem
+
+
+async def run_convert(func, *args):
+    """execute une conversion dans un thread, avec limite de parallelisme"""
+    async with convert_semaphore():
+        return await asyncio.to_thread(func, *args)
+
+
+def user_lock(user_id: int) -> asyncio.Lock:
+    """une file d'attente par utilisateur : ses medias restent dans l'ordre,
+    sans jamais bloquer les autres utilisateurs"""
+    lock = _user_locks.get(user_id)
+    if lock is None:
+        lock = _user_locks[user_id] = asyncio.Lock()
+    return lock
+
 
 
 # --------------------------------------------------------------------------
@@ -86,20 +117,42 @@ def extract_media(message):
     return None
 
 
-async def build_input_sticker(context, kind, file_id, suffix, emoji) -> InputSticker:
-    """prepare un InputSticker : les stickers existants passent par leur file_id,
-    les photos/videos sont converties au bon format"""
-    if kind in ('static', 'video', 'animated'):
+async def download(context, file_id: str) -> bytes:
+    tg_file = await context.bot.get_file(file_id)
+    return bytes(await tg_file.download_as_bytearray())
+
+
+def styled(active) -> bool:
+    """le pack impose-t-il une forme ou une ecriture ?"""
+    return bool(
+        active.get('shape', converter.SHAPE_ORIGINAL) != converter.SHAPE_ORIGINAL
+        or (active.get('watermark') or '').strip()
+    )
+
+
+async def build_input_sticker(context, kind, file_id, suffix, emoji, active) -> InputSticker:
+    """prepare un InputSticker en appliquant la forme et l'ecriture du pack.
+
+    Les stickers existants passent par leur file_id quand aucun style n'est
+    demande, sinon ils sont re-encodes pour porter la forme / l'ecriture.
+    """
+    shape = active.get('shape', converter.SHAPE_ORIGINAL)
+    watermark = (active.get('watermark') or '').strip()
+
+    if kind == 'animated':
+        # les .tgs (stickers animes Telegram) ne peuvent pas etre retouches
+        return InputSticker(sticker=file_id, emoji_list=[emoji], format='animated')
+
+    if kind in ('static', 'video') and not styled(active):
         return InputSticker(sticker=file_id, emoji_list=[emoji], format=kind)
 
-    tg_file = await context.bot.get_file(file_id)
-    raw = bytes(await tg_file.download_as_bytearray())
+    raw = await download(context, file_id)
 
-    if kind == 'photo':
-        data = await asyncio.to_thread(converter.image_to_webp, raw)
+    if kind in ('photo', 'static'):
+        data = await run_convert(converter.image_to_webp, raw, shape, watermark)
         return InputSticker(sticker=data, emoji_list=[emoji], format='static')
 
-    data = await asyncio.to_thread(converter.video_to_webm, raw, suffix)
+    data = await run_convert(converter.video_to_webm, raw, suffix, shape, watermark)
     return InputSticker(sticker=data, emoji_list=[emoji], format='video')
 
 
@@ -113,7 +166,12 @@ async def push_sticker(context, active, input_sticker, user_id) -> None:
             stickers=[input_sticker],
         )
         active['created'] = True
-        active['id'] = db.add_pack(user_id, active['name'], active['title'])
+        active['id'] = db.add_pack(
+            user_id, active['name'], active['title'],
+            active.get('shape', converter.SHAPE_ORIGINAL),
+            active.get('watermark', ''),
+        )
+
     else:
         await context.bot.add_sticker_to_set(
             user_id=user_id,
@@ -231,6 +289,15 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not active:
             return await reply(update, S.NO_ACTIVE_PACK)
         return await export_whatsapp(update, context, active['name'])
+    if text == kb.BTN_STYLE:
+        active = context.user_data.get('active')
+        if not active:
+            return await reply(update, S.NO_ACTIVE_PACK)
+        context.user_data['step'] = STEP_SHAPE
+        return await reply(update, S.ASK_SHAPE, reply_markup=kb.shape_choice())
+    if text == kb.BTN_NO_WM and context.user_data.get('step') == STEP_WM:
+        return await apply_watermark(update, context, '')
+
 
     step = context.user_data.get('step')
 
@@ -258,23 +325,70 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             pass
 
-        context.user_data['step'] = None
-        context.user_data['active'] = {
-            'name': name,
-            'title': context.user_data.get('title', 'Mon pack'),
-            'created': False,
-            'id': None,
-        }
-        return await reply(
-            update,
-            S.PACK_READY.format(title=context.user_data['active']['title'], link=pack_link(name)),
-            reply_markup=kb.pack_menu(),
-        )
+        context.user_data['step'] = STEP_SHAPE
+        context.user_data['draft'] = {'name': name, 'title': context.user_data.get('title', 'Mon pack')}
+        return await reply(update, S.ASK_SHAPE, reply_markup=kb.shape_choice())
+
+    if step == STEP_WM:
+        return await apply_watermark(update, context, text[:24])
+
 
     await reply(update, S.NO_ACTIVE_PACK, reply_markup=kb.main_menu(is_admin(user.id)))
 
 
+async def apply_shape(update: Update, context: ContextTypes.DEFAULT_TYPE, shape: str):
+    """etape 1 du style : la forme du sticker (original / carre / rond)"""
+    context.user_data['shape'] = shape
+    context.user_data['step'] = STEP_WM
+    await context.bot.send_message(
+        update.effective_chat.id,
+        S.ASK_WM,
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb.wm_menu(),
+    )
+
+
+async def apply_watermark(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """etape 2 du style : l'ecriture affichee en bas a droite de chaque sticker"""
+    shape = context.user_data.pop('shape', converter.SHAPE_ORIGINAL)
+    watermark = (text or '').strip()
+    context.user_data['step'] = None
+
+    active = context.user_data.get('active')
+    draft = context.user_data.pop('draft', None)
+
+    if draft:
+        active = {
+            'name': draft['name'],
+            'title': draft['title'],
+            'created': False,
+            'id': None,
+            'shape': shape,
+            'watermark': watermark,
+        }
+        context.user_data['active'] = active
+    elif active:
+        active['shape'] = shape
+        active['watermark'] = watermark
+        if active.get('id'):
+            db.set_pack_style(active['id'], shape, watermark)
+    else:
+        return await reply(update, S.NO_ACTIVE_PACK, reply_markup=kb.main_menu(is_admin(update.effective_user.id)))
+
+    return await reply(
+        update,
+        S.PACK_READY.format(
+            title=active['title'],
+            link=pack_link(active['name']),
+            shape=S.SHAPE_LABELS[shape],
+            wm=watermark or 'aucune',
+        ),
+        reply_markup=kb.pack_menu(),
+    )
+
+
 async def finish_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     active = context.user_data.get('active')
     if not active or not active.get('created'):
         return await reply(update, S.NO_ACTIVE_PACK, reply_markup=kb.main_menu(is_admin(update.effective_user.id)))
@@ -326,24 +440,35 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_one(update: Update, context: ContextTypes.DEFAULT_TYPE, media):
-    user = update.effective_user
-    active = context.user_data['active']
-    kind, file_id, unique_id, suffix, emoji, _ = media
+    """ajoute un media au pack actif, en tache de fond pour ne pas bloquer le bot"""
+    active = context.user_data.get('active')
+    if not active:
+        return await reply(update, S.NO_ACTIVE_PACK, reply_markup=kb.main_menu(is_admin(update.effective_user.id)))
 
     if active['id'] and db.pack_count(active['id']) >= config.MAX_STICKERS_PER_PACK:
         return await reply(update, S.PACK_FULL.format(max=config.MAX_STICKERS_PER_PACK))
 
-    if active['id'] and db.has_sticker(active['id'], unique_id):
+    if active['id'] and db.has_sticker(active['id'], media[2]):
         return await reply(update, S.DUPLICATE)
 
     waiting = await reply(update, S.WORKING)
-    try:
-        input_sticker = await build_input_sticker(context, kind, file_id, suffix, emoji)
-        await push_sticker(context, active, input_sticker, user.id)
-        db.add_sticker(active['id'], unique_id)
-    except (BadRequest, TelegramError, RuntimeError, OSError) as exc:
-        logger.exception('ajout impossible')
-        return await waiting.edit_text(S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML)
+    context.application.create_task(
+        _add_one_job(context, update.effective_user.id, active, media, waiting)
+    )
+
+
+async def _add_one_job(context, user_id, active, media, waiting):
+    kind, file_id, unique_id, suffix, emoji, _ = media
+    async with user_lock(user_id):
+        if active['id'] and db.has_sticker(active['id'], unique_id):
+            return await waiting.edit_text(S.DUPLICATE, parse_mode=ParseMode.HTML)
+        try:
+            input_sticker = await build_input_sticker(context, kind, file_id, suffix, emoji, active)
+            await push_sticker(context, active, input_sticker, user_id)
+            db.add_sticker(active['id'], unique_id)
+        except (BadRequest, TelegramError, RuntimeError, OSError) as exc:
+            logger.exception('ajout impossible')
+            return await waiting.edit_text(S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML)
 
     await waiting.edit_text(
         S.ADDED.format(count=db.pack_count(active['id']), title=active['title'], link=pack_link(active['name'])),
@@ -351,53 +476,66 @@ async def add_one(update: Update, context: ContextTypes.DEFAULT_TYPE, media):
     )
 
 
+
 async def import_full_pack(update: Update, context: ContextTypes.DEFAULT_TYPE, set_name: str):
     query = update.callback_query
-    user = update.effective_user
     active = context.user_data.get('active')
     if not active:
         return await query.edit_message_text(S.NO_ACTIVE_PACK, parse_mode=ParseMode.HTML)
 
+    await query.edit_message_text(S.WORKING, parse_mode=ParseMode.HTML)
+    # tache de fond : les autres utilisateurs continuent d'etre servis
+    context.application.create_task(
+        _import_full_pack_job(
+            context, update.effective_user.id, update.effective_chat.id, active, set_name
+        )
+    )
+
+
+async def _import_full_pack_job(context, user_id, chat_id, active, set_name):
     try:
         source = await context.bot.get_sticker_set(set_name)
     except TelegramError as exc:
-        return await query.edit_message_text(S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML)
-
-    await query.edit_message_text(S.WORKING, parse_mode=ParseMode.HTML)
+        return await context.bot.send_message(
+            chat_id, S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML
+        )
 
     added = dupes = failed = 0
-    for st in source.stickers:
-        if active['id'] and db.pack_count(active['id']) >= config.MAX_STICKERS_PER_PACK:
-            break
-        if active['id'] and db.has_sticker(active['id'], st.file_unique_id):
-            dupes += 1
-            continue
+    async with user_lock(user_id):
+        for st in source.stickers:
+            if active['id'] and db.pack_count(active['id']) >= config.MAX_STICKERS_PER_PACK:
+                break
+            if active['id'] and db.has_sticker(active['id'], st.file_unique_id):
+                dupes += 1
+                continue
 
-        if st.is_animated:
-            kind = 'animated'
-        elif st.is_video:
-            kind = 'video'
-        else:
-            kind = 'static'
+            if st.is_animated:
+                kind = 'animated'
+            elif st.is_video:
+                kind = 'video'
+            else:
+                kind = 'static'
+            suffix = '.webm' if kind == 'video' else '.webp'
 
-        try:
-            input_sticker = InputSticker(
-                sticker=st.file_id, emoji_list=[st.emoji or '🙂'], format=kind
-            )
-            await push_sticker(context, active, input_sticker, user.id)
-            db.add_sticker(active['id'], st.file_unique_id)
-            added += 1
-        except TelegramError as exc:
-            logger.warning('import sticker echoue: %s', exc)
-            failed += 1
-        await asyncio.sleep(0.6)
+            try:
+                input_sticker = await build_input_sticker(
+                    context, kind, st.file_id, suffix, st.emoji or '🙂', active
+                )
+                await push_sticker(context, active, input_sticker, user_id)
+                db.add_sticker(active['id'], st.file_unique_id)
+                added += 1
+            except (BadRequest, TelegramError, RuntimeError, OSError) as exc:
+                logger.warning('import sticker echoue: %s', exc)
+                failed += 1
+            await asyncio.sleep(0.6)
 
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=chat_id,
         text=S.IMPORT_DONE.format(added=added, dupes=dupes, failed=failed, link=pack_link(active['name'])),
         parse_mode=ParseMode.HTML,
         reply_markup=kb.pack_menu(),
     )
+
 
 
 # --------------------------------------------------------------------------
@@ -405,9 +543,13 @@ async def import_full_pack(update: Update, context: ContextTypes.DEFAULT_TYPE, s
 # --------------------------------------------------------------------------
 
 async def export_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE, set_name: str):
+    """la conversion tourne en tache de fond : le bot reste dispo pour tous"""
     chat_id = update.effective_chat.id
     await context.bot.send_message(chat_id, S.WA_START, parse_mode=ParseMode.HTML)
+    context.application.create_task(_export_whatsapp_job(context, chat_id, set_name))
 
+
+async def _export_whatsapp_job(context, chat_id, set_name):
     try:
         source = await context.bot.get_sticker_set(set_name)
     except TelegramError as exc:
@@ -421,9 +563,8 @@ async def export_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE, se
             continue  # les stickers .tgs ne sont pas supportes par WhatsApp
         suffix = '.webm' if st.is_video else '.webp'
         try:
-            tg_file = await context.bot.get_file(st.file_id)
-            raw = bytes(await tg_file.download_as_bytearray())
-            webps.append(await asyncio.to_thread(converter.to_wa_webp, raw, suffix))
+            raw = await download(context, st.file_id)
+            webps.append(await run_convert(converter.to_wa_webp, raw, suffix))
         except Exception as exc:  # noqa: BLE001
             logger.warning('conversion whatsapp echouee: %s', exc)
 
@@ -440,8 +581,8 @@ async def export_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE, se
             parse_mode=ParseMode.HTML,
         )
 
-    tray = await asyncio.to_thread(wastickers.build_tray_icon_png, webps[0])
-    files = await asyncio.to_thread(
+    tray = await run_convert(wastickers.build_tray_icon_png, webps[0])
+    files = await run_convert(
         wastickers.build_wastickers_files,
         source.title,
         f'@{context.bot.username}',
@@ -456,6 +597,7 @@ async def export_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE, se
     await context.bot.send_message(chat_id, S.WA_DONE, parse_mode=ParseMode.HTML)
 
 
+
 # --------------------------------------------------------------------------
 # callbacks
 # --------------------------------------------------------------------------
@@ -465,8 +607,18 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data or ''
 
+    if data.startswith('shape:'):
+        shape = data.split(':', 1)[1]
+        if shape not in (converter.SHAPE_ORIGINAL, converter.SHAPE_SQUARE, converter.SHAPE_ROUND):
+            shape = converter.SHAPE_ORIGINAL
+        await query.edit_message_text(
+            S.SHAPE_CHOSEN.format(shape=S.SHAPE_LABELS[shape]), parse_mode=ParseMode.HTML
+        )
+        return await apply_shape(update, context, shape)
+
     if data.startswith('imp:'):
         return await import_full_pack(update, context, data[4:])
+
 
     if data == 'imp_one':
         media = context.user_data.pop('pending', None)
@@ -485,12 +637,20 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not row:
             return await query.edit_message_text(S.NO_ACTIVE_PACK, parse_mode=ParseMode.HTML)
         context.user_data['active'] = {
-            'name': row['name'], 'title': row['title'], 'created': True, 'id': row['id']
+            'name': row['name'], 'title': row['title'], 'created': True, 'id': row['id'],
+            'shape': (row['shape'] if 'shape' in row.keys() else None) or converter.SHAPE_ORIGINAL,
+            'watermark': (row['watermark'] if 'watermark' in row.keys() else '') or '',
         }
         await query.edit_message_text(
-            S.PACK_READY.format(title=row['title'], link=pack_link(row['name'])),
+            S.PACK_READY.format(
+                title=row['title'],
+                link=pack_link(row['name']),
+                shape=S.SHAPE_LABELS[context.user_data['active']['shape']],
+                wm=context.user_data['active']['watermark'] or 'aucune',
+            ),
             parse_mode=ParseMode.HTML,
         )
+
         return await context.bot.send_message(
             update.effective_chat.id, '📨 En attente de tes médias...', reply_markup=kb.pack_menu()
         )
@@ -581,7 +741,22 @@ async def post_init(app: Application):
 def build_application() -> Application:
     db.init()
 
-    app = Application.builder().token(config.BOT_TOKEN).post_init(post_init).build()
+    app = (
+        Application.builder()
+        .token(config.BOT_TOKEN)
+        .post_init(post_init)
+        # plusieurs mises a jour traitees en parallele : un utilisateur qui
+        # convertit un gros pack ne bloque plus les autres
+        .concurrent_updates(config.CONCURRENT_UPDATES)
+        .connection_pool_size(config.CONNECTION_POOL_SIZE)
+        .pool_timeout(60.0)
+        .read_timeout(60.0)
+        .write_timeout(120.0)
+        .connect_timeout(30.0)
+        .media_write_timeout(180.0)
+        .build()
+    )
+
 
     app.add_handler(CommandHandler('start', cmd_start))
     app.add_handler(CommandHandler('help', cmd_help))

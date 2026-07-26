@@ -16,6 +16,8 @@ BTN_DONE = '✅ Terminer'
 BTN_CANCEL = '🚫 Annuler'
 BTN_WA = '🟢 Vers WhatsApp'
 BTN_ADMIN = '🛡 Admin'
+BTN_STYLE = '🎨 Format & écriture'
+BTN_NO_WM = '🚫 Sans écriture'
 
 
 def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
@@ -32,6 +34,7 @@ def pack_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(BTN_DONE), KeyboardButton(BTN_WA)],
+            [KeyboardButton(BTN_STYLE)],
             [KeyboardButton(BTN_MY_PACKS), KeyboardButton(BTN_CANCEL)],
         ],
         resize_keyboard=True,
@@ -44,6 +47,24 @@ def cancel_menu() -> ReplyKeyboardMarkup:
         [[KeyboardButton(BTN_CANCEL)]],
         resize_keyboard=True,
         input_field_placeholder='En attente de ta réponse ✍️',
+    )
+
+
+def wm_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(BTN_NO_WM)], [KeyboardButton(BTN_CANCEL)]],
+        resize_keyboard=True,
+        input_field_placeholder='Écris le mot à afficher ✍️',
+    )
+
+
+def shape_choice() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton('⬛ Carré', callback_data='shape:square')],
+            [InlineKeyboardButton('⚪ Rond', callback_data='shape:round')],
+            [InlineKeyboardButton('🖼 Format original', callback_data='shape:original')],
+        ]
     )
 
 

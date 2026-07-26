@@ -26,7 +26,11 @@ HELP = (
     "/new — créer un pack\n"
     "/mypacks — mes packs\n"
     "/top — classement\n"
-    "/cancel — annuler l'opération en cours"
+    "/cancel — annuler l'opération en cours\n\n"
+    "🎨 <b>Format</b> : à la création tu choisis <b>carré</b>, <b>rond</b> ou <b>original</b>.\n"
+    "✍️ <b>Écriture</b> : le mot choisi est écrit en bas à droite de <b>chaque</b> sticker du pack "
+    "(statique ou vidéo). Modifiable via <b>🎨 Format &amp; écriture</b>.\n"
+    "⚡ Plusieurs personnes peuvent utiliser le bot en même temps, même pendant une conversion."
 )
 
 ASK_TITLE = (
@@ -49,13 +53,40 @@ BAD_LINK = (
 
 LINK_TAKEN = "🚫 Ce lien est déjà utilisé. Choisis-en un autre 🔁"
 
+ASK_SHAPE = (
+    "🎨 <b>Format des stickers</b>\n\n"
+    "Choisis la forme que doivent avoir <b>tous</b> les stickers de ce pack :\n\n"
+    "⬛ <b>Carré</b> — image entière dans un carré 512×512\n"
+    "⚪ <b>Rond</b> — découpe circulaire\n"
+    "🖼 <b>Original</b> — je garde les proportions"
+)
+
+SHAPE_LABELS = {
+    'original': '🖼 Original',
+    'square': '⬛ Carré',
+    'round': '⚪ Rond',
+}
+
+SHAPE_CHOSEN = "✅ Format retenu : <b>{shape}</b>"
+
+ASK_WM = (
+    "✍️ <b>Écriture sur les stickers</b>\n\n"
+    "Envoie le mot à écrire <b>en bas à droite</b> de chaque sticker du pack "
+    "(exemple : <code>Christus</code>).\n"
+    "Ça marche pour les stickers <b>statiques</b> 🖼 <i>et</i> <b>vidéo</b> 🎬.\n\n"
+    "Si tu n'en veux pas, appuie sur <b>🚫 Sans écriture</b>."
+)
+
 PACK_READY = (
     "✅ <b>Pack prêt !</b>\n\n"
     "📦 <b>{title}</b>\n"
-    "🔗 <code>{link}</code>\n\n"
+    "🔗 <code>{link}</code>\n"
+    "🎨 Format : <b>{shape}</b>\n"
+    "✍️ Écriture : <b>{wm}</b>\n\n"
     "📨 Envoie-moi maintenant tes <b>photos</b> 🖼, <b>vidéos</b> 🎬, <b>GIF</b> 🎞 ou <b>stickers</b> 🧩.\n"
     "Quand tu as fini, appuie sur <b>✅ Terminer</b>."
 )
+
 
 ADDED = "✅ Ajouté ! 🔢 <b>{count}</b> sticker(s) dans <b>{title}</b>\n🔗 {link}"
 DUPLICATE = "♻️ Ce sticker est <b>déjà</b> dans le pack — je ne l'ajoute pas deux fois."
@@ -65,7 +96,7 @@ NO_ACTIVE_PACK = (
     "Appuie sur <b>➕ Nouveau pack</b> ou <b>📦 Mes packs</b> pour en sélectionner un."
 )
 FINISHED = "🎉 <b>Terminé !</b>\n\n📦 <b>{title}</b>\n🔢 {count} sticker(s)\n🔗 {link}"
-WORKING = "⏳ Téléchargement en cours, patiente un moment..."
+WORKING = "⏳ Traitement en cours... le bot reste disponible pour tout le monde 🙂"
 IMPORT_ASK = (
     "📦 <b>{title}</b>\n"
     "🔢 <b>{count}</b> stickers dans ce pack\n\n"
@@ -83,7 +114,11 @@ ERROR = "⚠️ Une erreur est survenue : <code>{error}</code>"
 UNSUPPORTED = "🤔 Je ne sais pas quoi faire avec ça. Envoie une photo, une vidéo, un GIF ou un sticker."
 BANNED = "🚫 Tu es banni de ce bot."
 
-WA_START = "⏳ Conversion vers WhatsApp en cours, patiente un moment..."
+WA_START = (
+    "⏳ <b>Conversion vers WhatsApp lancée</b>\n"
+    "Je t'envoie les fichiers dès qu'ils sont prêts — pendant ce temps le bot "
+    "continue de fonctionner normalement pour toi et pour les autres 🙂"
+)
 WA_SPLIT = "⚠️ Pack trop grand — divisé en <b>{files} fichiers</b> max {per} stickers."
 WA_DONE = "🟢 <b>Prêt pour WhatsApp !</b>\nOuvre les fichiers avec l'application <i>Sticker Maker</i>."
 
