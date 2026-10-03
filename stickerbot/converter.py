@@ -120,7 +120,14 @@ WM_BORDER_ALPHA = 0.25
 WM_SIZE_RATIO = 0.065     # taille du texte par rapport a la hauteur
 
 
-def draw_watermark(im: Image.Image, text: str) -> Image.Image:
+def _wm_margin(width: int, shape: str) -> int:
+    """en rond, le coin est hors du cercle : on rentre l'ecriture dans le disque"""
+    if shape == SHAPE_ROUND:
+        return int(width * 0.17)
+    return max(6, int(width * 0.035))
+
+
+def draw_watermark(im: Image.Image, text: str, shape: str = SHAPE_ORIGINAL) -> Image.Image:
     """ecrit le texte en bas a droite du sticker, de facon discrete (transparente)"""
     text = (text or '').strip()
     if not text:
@@ -144,7 +151,7 @@ def draw_watermark(im: Image.Image, text: str) -> Image.Image:
 
     stroke = max(1, size // 16)
     box = draw.textbbox((0, 0), text, font=font, stroke_width=stroke)
-    margin = max(6, int(im.width * 0.035))
+    margin = _wm_margin(im.width, shape)
     x = im.width - (box[2] - box[0]) - margin - box[0]
     y = im.height - (box[3] - box[1]) - margin - box[1]
     draw.text(
@@ -166,7 +173,7 @@ def image_to_webp(data: bytes, shape: str = SHAPE_ORIGINAL, watermark: str = '')
         im = im.convert('RGBA')
 
     im = _apply_shape(im, shape)
-    im = draw_watermark(im, watermark)
+    im = draw_watermark(im, watermark, shape)
 
     out = BytesIO()
     im.save(out, 'WEBP', quality=90, method=6)
@@ -222,7 +229,7 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
         with open(text_path, 'w', encoding='utf-8') as fh:
             fh.write(text)
         fsize = max(14, int(STICKER_SIZE * WM_SIZE_RATIO))
-        margin = int(STICKER_SIZE * 0.035)
+        margin = _wm_margin(STICKER_SIZE, shape)
         fontfile = font_path()
         draw = (
             f"drawtext=textfile='{text_path}'"
