@@ -71,7 +71,8 @@ SHAPE_CHOSEN = "✅ Format retenu : <b>{shape}</b>"
 
 ASK_WM = (
     "✍️ <b>Écriture sur les stickers</b>\n\n"
-    "Envoie le mot à écrire <b>en bas à droite</b> de chaque sticker du pack "
+    "Envoie le mot à écrire <b>en bas à droite</b> de chaque sticker du pack, "
+    "de façon <b>discrète</b> (semi-transparente) "
     "(exemple : <code>Christus</code>).\n"
     "Ça marche pour les stickers <b>statiques</b> 🖼 <i>et</i> <b>vidéo</b> 🎬.\n\n"
     "Si tu n'en veux pas, appuie sur <b>🚫 Sans écriture</b>."
