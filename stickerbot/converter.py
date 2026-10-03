@@ -47,8 +47,16 @@ def _load_font(size: int):
     return ImageFont.load_default()
 
 
+FFMPEG_TIMEOUT = 120
+
+
 def _run(args):
-    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(
+            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError('conversion trop longue (délai dépassé)')
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.decode('utf-8', 'ignore')[-400:])
 
@@ -106,34 +114,45 @@ def _apply_shape(im: Image.Image, shape: str) -> Image.Image:
     return _fit_original(im)
 
 
+# ecriture discrete : blanc semi-transparent avec un leger contour
+WM_TEXT_ALPHA = 0.45      # 0 = invisible, 1 = opaque
+WM_BORDER_ALPHA = 0.25
+WM_SIZE_RATIO = 0.065     # taille du texte par rapport a la hauteur
+
+
 def draw_watermark(im: Image.Image, text: str) -> Image.Image:
-    """ecrit le texte en bas a droite du sticker"""
+    """ecrit le texte en bas a droite du sticker, de facon discrete (transparente)"""
     text = (text or '').strip()
     if not text:
         return im
 
     im = im.convert('RGBA')
-    draw = ImageDraw.Draw(im)
-    size = max(18, int(im.height * 0.09))
+    # on dessine sur un calque separe puis on le fusionne : sinon le texte
+    # semi-transparent "trouerait" l'image au lieu de se poser dessus
+    layer = Image.new('RGBA', im.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    size = max(14, int(im.height * WM_SIZE_RATIO))
     font = _load_font(size)
 
     # reduit la police si le texte est trop large
     for _ in range(12):
-        box = draw.textbbox((0, 0), text, font=font, stroke_width=2)
-        if box[2] - box[0] <= im.width * 0.92 or size <= 12:
+        box = draw.textbbox((0, 0), text, font=font, stroke_width=1)
+        if box[2] - box[0] <= im.width * 0.85 or size <= 10:
             break
         size = int(size * 0.88)
         font = _load_font(size)
 
-    box = draw.textbbox((0, 0), text, font=font, stroke_width=2)
-    margin = max(6, int(im.width * 0.03))
-    x = im.width - (box[2] - box[0]) - margin
-    y = im.height - (box[3] - box[1]) - margin
+    stroke = max(1, size // 16)
+    box = draw.textbbox((0, 0), text, font=font, stroke_width=stroke)
+    margin = max(6, int(im.width * 0.035))
+    x = im.width - (box[2] - box[0]) - margin - box[0]
+    y = im.height - (box[3] - box[1]) - margin - box[1]
     draw.text(
-        (x, y), text, font=font, fill=(255, 255, 255, 255),
-        stroke_width=max(2, size // 12), stroke_fill=(0, 0, 0, 220),
+        (x, y), text, font=font,
+        fill=(255, 255, 255, int(255 * WM_TEXT_ALPHA)),
+        stroke_width=stroke, stroke_fill=(0, 0, 0, int(255 * WM_BORDER_ALPHA)),
     )
-    return im
+    return Image.alpha_composite(im, layer)
 
 
 # --------------------------------------------------------------------------
