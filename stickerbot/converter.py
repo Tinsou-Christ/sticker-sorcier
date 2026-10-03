@@ -44,11 +44,22 @@ def _load_font(size: int):
             return ImageFont.truetype(path, size)
         except OSError:
             pass
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size)  # Pillow >= 10.1 : police vectorielle
+    except TypeError:
+        return ImageFont.load_default()
+
+
+FFMPEG_TIMEOUT = 120
 
 
 def _run(args):
-    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(
+            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError('conversion trop longue (délai dépassé)')
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.decode('utf-8', 'ignore')[-400:])
 
@@ -106,34 +117,52 @@ def _apply_shape(im: Image.Image, shape: str) -> Image.Image:
     return _fit_original(im)
 
 
-def draw_watermark(im: Image.Image, text: str) -> Image.Image:
-    """ecrit le texte en bas a droite du sticker"""
+# ecriture discrete : blanc semi-transparent avec un leger contour
+WM_TEXT_ALPHA = 0.45      # 0 = invisible, 1 = opaque
+WM_BORDER_ALPHA = 0.25
+WM_SIZE_RATIO = 0.065     # taille du texte par rapport a la hauteur
+
+
+def _wm_margin(width: int, shape: str) -> int:
+    """en rond, le coin est hors du cercle : on rentre l'ecriture dans le disque"""
+    if shape == SHAPE_ROUND:
+        return int(width * 0.17)
+    return max(6, int(width * 0.035))
+
+
+def draw_watermark(im: Image.Image, text: str, shape: str = SHAPE_ORIGINAL) -> Image.Image:
+    """ecrit le texte en bas a droite du sticker, de facon discrete (transparente)"""
     text = (text or '').strip()
     if not text:
         return im
 
     im = im.convert('RGBA')
-    draw = ImageDraw.Draw(im)
-    size = max(18, int(im.height * 0.09))
+    # on dessine sur un calque separe puis on le fusionne : sinon le texte
+    # semi-transparent "trouerait" l'image au lieu de se poser dessus
+    layer = Image.new('RGBA', im.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    size = max(14, int(im.height * WM_SIZE_RATIO))
     font = _load_font(size)
 
     # reduit la police si le texte est trop large
     for _ in range(12):
-        box = draw.textbbox((0, 0), text, font=font, stroke_width=2)
-        if box[2] - box[0] <= im.width * 0.92 or size <= 12:
+        box = draw.textbbox((0, 0), text, font=font, stroke_width=1)
+        if box[2] - box[0] <= im.width * 0.85 or size <= 10:
             break
         size = int(size * 0.88)
         font = _load_font(size)
 
-    box = draw.textbbox((0, 0), text, font=font, stroke_width=2)
-    margin = max(6, int(im.width * 0.03))
-    x = im.width - (box[2] - box[0]) - margin
-    y = im.height - (box[3] - box[1]) - margin
+    stroke = max(1, size // 16)
+    box = draw.textbbox((0, 0), text, font=font, stroke_width=stroke)
+    margin = _wm_margin(im.width, shape)
+    x = im.width - (box[2] - box[0]) - margin - box[0]
+    y = im.height - (box[3] - box[1]) - margin - box[1]
     draw.text(
-        (x, y), text, font=font, fill=(255, 255, 255, 255),
-        stroke_width=max(2, size // 12), stroke_fill=(0, 0, 0, 220),
+        (x, y), text, font=font,
+        fill=(255, 255, 255, int(255 * WM_TEXT_ALPHA)),
+        stroke_width=stroke, stroke_fill=(0, 0, 0, int(255 * WM_BORDER_ALPHA)),
     )
-    return im
+    return Image.alpha_composite(im, layer)
 
 
 # --------------------------------------------------------------------------
@@ -147,7 +176,7 @@ def image_to_webp(data: bytes, shape: str = SHAPE_ORIGINAL, watermark: str = '')
         im = im.convert('RGBA')
 
     im = _apply_shape(im, shape)
-    im = draw_watermark(im, watermark)
+    im = draw_watermark(im, watermark, shape)
 
     out = BytesIO()
     im.save(out, 'WEBP', quality=90, method=6)
@@ -163,8 +192,10 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
     steps = [f'scale={STICKER_SIZE}:{STICKER_SIZE}:force_original_aspect_ratio=decrease']
 
     if shape == SHAPE_SQUARE:
+        # la transparence doit exister AVANT le pad pour avoir des bords transparents
+        steps.append('format=yuva420p')
         steps.append(
-            f'pad={STICKER_SIZE}:{STICKER_SIZE}:(ow-iw)/2:(oh-ih)/2:color=#00000000'
+            f'pad={STICKER_SIZE}:{STICKER_SIZE}:(ow-iw)/2:(oh-ih)/2:color=black@0'
         )
     elif shape == SHAPE_ROUND:
         steps.append(
@@ -183,7 +214,12 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
         mask_path = os.path.join(tmp, 'mask.png')
         gray = circle_mask(STICKER_SIZE)
         Image.merge('RGB', (gray, gray, gray)).save(mask_path)
-        inputs = ['-loop', '1', '-i', mask_path]
+        # IMPORTANT : le masque est borne a la duree max, sinon ffmpeg
+        # tourne a l'infini et le sticker n'arrive jamais
+        inputs = [
+            '-loop', '1', '-framerate', str(fps),
+            '-t', str(VIDEO_MAX_SECONDS), '-i', mask_path,
+        ]
         chain += (
             f';[1:v]scale={STICKER_SIZE}:{STICKER_SIZE},format=gray[m]'
             f';[v][m]alphamerge[vm]'
@@ -195,13 +231,14 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
         text_path = os.path.join(tmp, 'wm.txt')
         with open(text_path, 'w', encoding='utf-8') as fh:
             fh.write(text)
-        fsize = max(18, int(STICKER_SIZE * 0.09))
+        fsize = max(14, int(STICKER_SIZE * WM_SIZE_RATIO))
+        margin = _wm_margin(STICKER_SIZE, shape)
         fontfile = font_path()
         draw = (
             f"drawtext=textfile='{text_path}'"
-            f':fontsize={fsize}:fontcolor=white'
-            f':borderw={max(2, fsize // 12)}:bordercolor=black@0.85'
-            f':x=w-tw-{int(STICKER_SIZE * 0.03)}:y=h-th-{int(STICKER_SIZE * 0.03)}'
+            f':fontsize={fsize}:fontcolor=white@{WM_TEXT_ALPHA}'
+            f':borderw={max(1, fsize // 16)}:bordercolor=black@{WM_BORDER_ALPHA}'
+            f':x=w-tw-{margin}:y=h-th-{margin}'
         )
         if fontfile:
             draw += f":fontfile='{fontfile}'"
@@ -232,6 +269,7 @@ def video_to_webm(
                 'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
                 '-t', str(VIDEO_MAX_SECONDS), '-i', src, *inputs,
                 '-filter_complex', chain, '-map', last,
+                '-t', str(VIDEO_MAX_SECONDS),
                 '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', str(crf),
                 '-an', '-pix_fmt', 'yuva420p',
                 '-f', 'webm', dst,
@@ -261,6 +299,7 @@ def any_to_animated_webp(
             'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
             '-t', str(VIDEO_MAX_SECONDS), '-i', src, *inputs,
             '-filter_complex', chain, '-map', last,
+            '-t', str(VIDEO_MAX_SECONDS),
             '-loop', '0', '-an', '-fps_mode', 'passthrough',
             '-c:v', 'libwebp', '-quality', '55', '-compression_level', '6',
             dst,
