@@ -1,6 +1,7 @@
 """Bot Telegram de création de stickers — 100% en français."""
 
 import asyncio
+import html
 import logging
 import re
 
@@ -474,7 +475,7 @@ async def _add_one_job(context, user_id, active, media, waiting):
     except Exception as exc:  # noqa: BLE001 - l'utilisateur doit TOUJOURS avoir une reponse
         logger.exception('ajout impossible')
         try:
-            await waiting.edit_text(S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML)
+            await waiting.edit_text(S.ERROR.format(error=html.escape(str(exc)[:200])), parse_mode=ParseMode.HTML)
         except TelegramError:
             pass
 
@@ -500,7 +501,7 @@ async def _import_full_pack_job(context, user_id, chat_id, active, set_name):
         source = await context.bot.get_sticker_set(set_name)
     except TelegramError as exc:
         return await context.bot.send_message(
-            chat_id, S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML
+            chat_id, S.ERROR.format(error=html.escape(str(exc)[:200])), parse_mode=ParseMode.HTML
         )
 
     added = dupes = failed = 0
@@ -557,7 +558,7 @@ async def _export_whatsapp_job(context, chat_id, set_name):
         source = await context.bot.get_sticker_set(set_name)
     except TelegramError as exc:
         return await context.bot.send_message(
-            chat_id, S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML
+            chat_id, S.ERROR.format(error=html.escape(str(exc)[:200])), parse_mode=ParseMode.HTML
         )
 
     webps = []
