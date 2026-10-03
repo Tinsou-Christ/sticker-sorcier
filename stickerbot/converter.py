@@ -44,7 +44,10 @@ def _load_font(size: int):
             return ImageFont.truetype(path, size)
         except OSError:
             pass
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size)  # Pillow >= 10.1 : police vectorielle
+    except TypeError:
+        return ImageFont.load_default()
 
 
 FFMPEG_TIMEOUT = 120

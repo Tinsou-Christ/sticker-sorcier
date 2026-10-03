@@ -459,21 +459,24 @@ async def add_one(update: Update, context: ContextTypes.DEFAULT_TYPE, media):
 
 async def _add_one_job(context, user_id, active, media, waiting):
     kind, file_id, unique_id, suffix, emoji, _ = media
-    async with user_lock(user_id):
-        if active['id'] and db.has_sticker(active['id'], unique_id):
-            return await waiting.edit_text(S.DUPLICATE, parse_mode=ParseMode.HTML)
-        try:
+    try:
+        async with user_lock(user_id):
+            if active['id'] and db.has_sticker(active['id'], unique_id):
+                return await waiting.edit_text(S.DUPLICATE, parse_mode=ParseMode.HTML)
             input_sticker = await build_input_sticker(context, kind, file_id, suffix, emoji, active)
             await push_sticker(context, active, input_sticker, user_id)
             db.add_sticker(active['id'], unique_id)
-        except (BadRequest, TelegramError, RuntimeError, OSError) as exc:
-            logger.exception('ajout impossible')
-            return await waiting.edit_text(S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML)
 
-    await waiting.edit_text(
-        S.ADDED.format(count=db.pack_count(active['id']), title=active['title'], link=pack_link(active['name'])),
-        parse_mode=ParseMode.HTML,
-    )
+        await waiting.edit_text(
+            S.ADDED.format(count=db.pack_count(active['id']), title=active['title'], link=pack_link(active['name'])),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:  # noqa: BLE001 - l'utilisateur doit TOUJOURS avoir une reponse
+        logger.exception('ajout impossible')
+        try:
+            await waiting.edit_text(S.ERROR.format(error=str(exc)[:200]), parse_mode=ParseMode.HTML)
+        except TelegramError:
+            pass
 
 
 
@@ -524,7 +527,7 @@ async def _import_full_pack_job(context, user_id, chat_id, active, set_name):
                 await push_sticker(context, active, input_sticker, user_id)
                 db.add_sticker(active['id'], st.file_unique_id)
                 added += 1
-            except (BadRequest, TelegramError, RuntimeError, OSError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning('import sticker echoue: %s', exc)
                 failed += 1
             await asyncio.sleep(0.6)
