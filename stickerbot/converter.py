@@ -182,8 +182,10 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
     steps = [f'scale={STICKER_SIZE}:{STICKER_SIZE}:force_original_aspect_ratio=decrease']
 
     if shape == SHAPE_SQUARE:
+        # la transparence doit exister AVANT le pad pour avoir des bords transparents
+        steps.append('format=yuva420p')
         steps.append(
-            f'pad={STICKER_SIZE}:{STICKER_SIZE}:(ow-iw)/2:(oh-ih)/2:color=#00000000'
+            f'pad={STICKER_SIZE}:{STICKER_SIZE}:(ow-iw)/2:(oh-ih)/2:color=black@0'
         )
     elif shape == SHAPE_ROUND:
         steps.append(
@@ -202,7 +204,12 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
         mask_path = os.path.join(tmp, 'mask.png')
         gray = circle_mask(STICKER_SIZE)
         Image.merge('RGB', (gray, gray, gray)).save(mask_path)
-        inputs = ['-loop', '1', '-i', mask_path]
+        # IMPORTANT : le masque est borne a la duree max, sinon ffmpeg
+        # tourne a l'infini et le sticker n'arrive jamais
+        inputs = [
+            '-loop', '1', '-framerate', str(fps),
+            '-t', str(VIDEO_MAX_SECONDS), '-i', mask_path,
+        ]
         chain += (
             f';[1:v]scale={STICKER_SIZE}:{STICKER_SIZE},format=gray[m]'
             f';[v][m]alphamerge[vm]'
@@ -214,13 +221,14 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
         text_path = os.path.join(tmp, 'wm.txt')
         with open(text_path, 'w', encoding='utf-8') as fh:
             fh.write(text)
-        fsize = max(18, int(STICKER_SIZE * 0.09))
+        fsize = max(14, int(STICKER_SIZE * WM_SIZE_RATIO))
+        margin = int(STICKER_SIZE * 0.035)
         fontfile = font_path()
         draw = (
             f"drawtext=textfile='{text_path}'"
-            f':fontsize={fsize}:fontcolor=white'
-            f':borderw={max(2, fsize // 12)}:bordercolor=black@0.85'
-            f':x=w-tw-{int(STICKER_SIZE * 0.03)}:y=h-th-{int(STICKER_SIZE * 0.03)}'
+            f':fontsize={fsize}:fontcolor=white@{WM_TEXT_ALPHA}'
+            f':borderw={max(1, fsize // 16)}:bordercolor=black@{WM_BORDER_ALPHA}'
+            f':x=w-tw-{margin}:y=h-th-{margin}'
         )
         if fontfile:
             draw += f":fontfile='{fontfile}'"
