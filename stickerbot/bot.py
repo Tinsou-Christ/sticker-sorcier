@@ -285,10 +285,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cmd_admin(update, context)
     if text == kb.BTN_DONE:
         return await finish_pack(update, context)
+    if text == kb.BTN_CONVERT:
+        context.user_data['convert_mode'] = True
+        return await reply(update, S.CONVERT_ASK, reply_markup=kb.cancel_menu())
     if text == kb.BTN_WA:
         active = context.user_data.get('active')
         if not active:
-            return await reply(update, S.NO_ACTIVE_PACK)
+            context.user_data['convert_mode'] = True
+            return await reply(update, S.CONVERT_ASK, reply_markup=kb.cancel_menu())
         return await export_whatsapp(update, context, active['name'])
     if text == kb.BTN_STYLE:
         active = context.user_data.get('active')
@@ -418,8 +422,23 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await reply(update, S.UNSUPPORTED)
 
     active = context.user_data.get('active')
-    if not active:
-        return await reply(update, S.NO_ACTIVE_PACK, reply_markup=kb.main_menu(is_admin(user.id)))
+    if not active or context.user_data.get('convert_mode'):
+        # conversion directe vers WhatsApp, sans creer de pack
+        context.user_data['wa_pending'] = media
+        set_name = media[5]
+        count = 0
+        title = ''
+        if set_name:
+            try:
+                source = await context.bot.get_sticker_set(set_name)
+                count, title = len(source.stickers), source.title
+            except TelegramError:
+                set_name = None
+        return await reply(
+            update,
+            S.CONVERT_CHOICE.format(title=html.escape(title), count=count) if set_name else S.CONVERT_ONE_ASK,
+            reply_markup=kb.convert_choice(set_name),
+        )
 
     kind, file_id, unique_id, suffix, emoji, set_name = media
 
@@ -601,6 +620,28 @@ async def _export_whatsapp_job(context, chat_id, set_name):
     await context.bot.send_message(chat_id, S.WA_DONE, parse_mode=ParseMode.HTML)
 
 
+async def _convert_one_job(context, chat_id, media):
+    """convertit un seul sticker / media en fichier .wastickers"""
+    kind, file_id, unique_id, suffix, emoji, _ = media
+    try:
+        if kind == 'animated':
+            raise RuntimeError('les stickers animés (.tgs) ne sont pas supportés par WhatsApp')
+        raw = await download(context, file_id)
+        webp = await run_convert(converter.to_wa_webp, raw, suffix)
+        tray = await run_convert(wastickers.build_tray_icon_png, webp)
+        files = await run_convert(
+            wastickers.build_wastickers_files, 'Sticker', f'@{context.bot.username}', [webp], tray, 30
+        )
+        for filename, buf in files:
+            await context.bot.send_document(chat_id, document=buf, filename=filename)
+        await context.bot.send_message(chat_id, S.WA_DONE, parse_mode=ParseMode.HTML)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('conversion directe echouee')
+        await context.bot.send_message(
+            chat_id, S.ERROR.format(error=html.escape(str(exc)[:200])), parse_mode=ParseMode.HTML
+        )
+
+
 
 # --------------------------------------------------------------------------
 # callbacks
@@ -661,6 +702,20 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith('wa:'):
         return await export_whatsapp(update, context, data[3:])
+
+    if data == 'wa_one':
+        media = context.user_data.pop('wa_pending', None)
+        if not media:
+            return await query.edit_message_text(S.CANCELLED, parse_mode=ParseMode.HTML)
+        await query.edit_message_text(S.WA_START, parse_mode=ParseMode.HTML)
+        context.application.create_task(
+            _convert_one_job(context, update.effective_chat.id, media)
+        )
+        return
+
+    if data == 'wa_no':
+        context.user_data.pop('wa_pending', None)
+        return await query.edit_message_text(S.CANCELLED, parse_mode=ParseMode.HTML)
 
     if data.startswith('del:'):
         name = data[4:]
