@@ -45,6 +45,7 @@ def init():
         )
         # migrations : forme du sticker + ecriture (watermark) par pack
         for column, ddl in (
+            ('watermark_color', "ALTER TABLE packs ADD COLUMN watermark_color TEXT NOT NULL DEFAULT '#FFFFFF'"),
             ('shape', "ALTER TABLE packs ADD COLUMN shape TEXT NOT NULL DEFAULT 'original'"),
             ('watermark', "ALTER TABLE packs ADD COLUMN watermark TEXT NOT NULL DEFAULT ''"),
         ):
@@ -94,16 +95,16 @@ def all_user_ids():
 
 # ---------- packs ----------
 
-def add_pack(user_id: int, name: str, title: str, shape: str = 'original', watermark: str = '') -> int:
+def add_pack(user_id: int, name: str, title: str, shape: str = 'original', watermark: str = '', watermark_color: str = '#FFFFFF') -> int:
     return _exec(
-        'INSERT INTO packs (user_id, name, title, shape, watermark, created_at) '
-        'VALUES (?, ?, ?, ?, ?, ?)',
-        (user_id, name, title, shape, watermark or '', int(time.time())),
+        'INSERT INTO packs (user_id, name, title, shape, watermark, watermark_color, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (user_id, name, title, shape, watermark or '', watermark_color, int(time.time())),
     )
 
 
-def set_pack_style(pack_id: int, shape: str, watermark: str):
-    _exec('UPDATE packs SET shape = ?, watermark = ? WHERE id = ?', (shape, watermark or '', pack_id))
+def set_pack_style(pack_id: int, shape: str, watermark: str, watermark_color: str = '#FFFFFF'):
+    _exec('UPDATE packs SET shape = ?, watermark = ?, watermark_color = ? WHERE id = ?', (shape, watermark or '', watermark_color, pack_id))
 
 
 def get_pack(user_id: int, name: str):

@@ -28,8 +28,8 @@ HELP = (
     "/top — classement\n"
     "/cancel — annuler l'opération en cours\n\n"
     "🎨 <b>Format</b> : à la création tu choisis <b>carré</b>, <b>rond</b> ou <b>original</b>.\n"
-    "✍️ <b>Écriture</b> : le mot choisi est écrit en bas à droite de <b>chaque</b> sticker du pack "
-    "(statique ou vidéo). Modifiable via <b>🎨 Format &amp; écriture</b>.\n"
+    "✍️ <b>Écriture</b> : le mot choisi est écrit en bas à gauche de <b>chaque</b> sticker du pack "
+    "(statique ou vidéo), avec la couleur de ton choix. Modifiable via <b>🎨 Format &amp; écriture</b>.\n"
     "⚡ Plusieurs personnes peuvent utiliser le bot en même temps, même pendant une conversion."
 )
 
@@ -71,8 +71,8 @@ SHAPE_CHOSEN = "✅ Format retenu : <b>{shape}</b>"
 
 ASK_WM = (
     "✍️ <b>Écriture sur les stickers</b>\n\n"
-    "Envoie le mot à écrire <b>en bas à droite</b> de chaque sticker du pack, "
-    "de façon <b>discrète</b> (semi-transparente) "
+    "Envoie le mot à écrire <b>en bas à gauche</b> de chaque sticker du pack, "
+    "Tu choisiras ensuite sa couleur. De façon <b>discrète</b> (semi-transparente) "
     "(exemple : <code>Christus</code>).\n"
     "Ça marche pour les stickers <b>statiques</b> 🖼 <i>et</i> <b>vidéo</b> 🎬.\n\n"
     "Si tu n'en veux pas, appuie sur <b>🚫 Sans écriture</b>."
@@ -154,3 +154,6 @@ CONVERT_CHOICE = (
     "Que veux-tu convertir ?"
 )
 CONVERT_ONE_ASK = "🟢 <b>Convertir vers WhatsApp</b>\n\nJe convertis ce média en sticker WhatsApp ?"
+
+ASK_COLOR = "🎨 <b>Couleur de l’écriture</b>\nChoisis une couleur ou envoie ton code personnalisé, par exemple <code>#FF8800</code>."
+BAD_COLOR = "⚠️ Choisis une couleur ci-dessous ou un code de 6 chiffres/lettres comme <code>#FF0000</code>."

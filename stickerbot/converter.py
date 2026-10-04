@@ -1,7 +1,7 @@
 """Conversion des medias vers les formats acceptes par Telegram / WhatsApp.
 
 Gere aussi la forme du sticker (original / carre / rond) et l'ecriture
-(watermark) ajoutee en bas a droite.
+(watermark) ajoutee en bas a gauche.
 """
 
 import logging
@@ -10,7 +10,8 @@ import subprocess
 import tempfile
 from io import BytesIO
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
+from text_renderer import DEFAULT_COLOR, render_text
 
 logger = logging.getLogger(__name__)
 
@@ -21,34 +22,6 @@ VIDEO_MAX_BYTES = 256 * 1024
 SHAPE_ORIGINAL = 'original'
 SHAPE_SQUARE = 'square'
 SHAPE_ROUND = 'round'
-
-FONT_CANDIDATES = (
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-    '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-    '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
-)
-
-
-def font_path() -> str:
-    for path in FONT_CANDIDATES:
-        if os.path.exists(path):
-            return path
-    return ''
-
-
-def _load_font(size: int):
-    path = font_path()
-    if path:
-        try:
-            return ImageFont.truetype(path, size)
-        except OSError:
-            pass
-    try:
-        return ImageFont.load_default(size)  # Pillow >= 10.1 : police vectorielle
-    except TypeError:
-        return ImageFont.load_default()
-
 
 FFMPEG_TIMEOUT = 120
 
@@ -130,53 +103,41 @@ def _wm_margin(width: int, shape: str) -> int:
     return max(6, int(width * 0.035))
 
 
-def draw_watermark(im: Image.Image, text: str, shape: str = SHAPE_ORIGINAL) -> Image.Image:
-    """ecrit le texte en bas a droite du sticker, de facon discrete (transparente)"""
-    text = (text or '').strip()
-    if not text:
+def watermark_layer(width, height, text, shape, color=DEFAULT_COLOR):
+    layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    if not (text or '').strip():
+        return layer
+    margin = _wm_margin(width, shape)
+    max_width = width - 2 * margin
+    # Keep the whole label inside the lower-left part of a circular sticker.
+    if shape == SHAPE_ROUND:
+        max_width = int(width * 0.55)
+    label = render_text(text.strip(), max_width, max(12, height // 5),
+                        max(14, int(height * WM_SIZE_RATIO)), color)
+    layer.alpha_composite(label, (margin, height - margin - label.height))
+    return layer
+
+
+def draw_watermark(im: Image.Image, text: str, shape: str = SHAPE_ORIGINAL,
+                   color: str = DEFAULT_COLOR) -> Image.Image:
+    if not (text or '').strip():
         return im
-
     im = im.convert('RGBA')
-    # on dessine sur un calque separe puis on le fusionne : sinon le texte
-    # semi-transparent "trouerait" l'image au lieu de se poser dessus
-    layer = Image.new('RGBA', im.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    size = max(14, int(im.height * WM_SIZE_RATIO))
-    font = _load_font(size)
-
-    # reduit la police si le texte est trop large
-    for _ in range(12):
-        box = draw.textbbox((0, 0), text, font=font, stroke_width=1)
-        if box[2] - box[0] <= im.width * 0.85 or size <= 10:
-            break
-        size = int(size * 0.88)
-        font = _load_font(size)
-
-    stroke = max(1, size // 16)
-    box = draw.textbbox((0, 0), text, font=font, stroke_width=stroke)
-    margin = _wm_margin(im.width, shape)
-    x = im.width - (box[2] - box[0]) - margin - box[0]
-    y = im.height - (box[3] - box[1]) - margin - box[1]
-    draw.text(
-        (x, y), text, font=font,
-        fill=(255, 255, 255, int(255 * WM_TEXT_ALPHA)),
-        stroke_width=stroke, stroke_fill=(0, 0, 0, int(255 * WM_BORDER_ALPHA)),
-    )
-    return Image.alpha_composite(im, layer)
+    return Image.alpha_composite(im, watermark_layer(im.width, im.height, text, shape, color))
 
 
 # --------------------------------------------------------------------------
 # images
 # --------------------------------------------------------------------------
 
-def image_to_webp(data: bytes, shape: str = SHAPE_ORIGINAL, watermark: str = '') -> bytes:
+def image_to_webp(data: bytes, shape: str = SHAPE_ORIGINAL, watermark: str = '', color: str = DEFAULT_COLOR) -> bytes:
     """transforme une image en sticker statique 512px webp"""
     im = Image.open(BytesIO(data))
     if im.mode != 'RGBA':
         im = im.convert('RGBA')
 
     im = _apply_shape(im, shape)
-    im = draw_watermark(im, watermark, shape)
+    im = draw_watermark(im, watermark, shape, color)
 
     out = BytesIO()
     im.save(out, 'WEBP', quality=90, method=6)
@@ -187,7 +148,7 @@ def image_to_webp(data: bytes, shape: str = SHAPE_ORIGINAL, watermark: str = '')
 # videos
 # --------------------------------------------------------------------------
 
-def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
+def _video_filters(tmp: str, shape: str, watermark: str, fps: int, color: str = DEFAULT_COLOR, suffix: str = ".mp4") -> list:
     """construit les arguments -filter_complex pour ffmpeg"""
     steps = [f'scale={STICKER_SIZE}:{STICKER_SIZE}:force_original_aspect_ratio=decrease']
 
@@ -226,23 +187,27 @@ def _video_filters(tmp: str, shape: str, watermark: str, fps: int) -> list:
         )
         last = '[vm]'
 
-    text = (watermark or '').strip()
-    if text:
-        text_path = os.path.join(tmp, 'wm.txt')
-        with open(text_path, 'w', encoding='utf-8') as fh:
-            fh.write(text)
-        fsize = max(14, int(STICKER_SIZE * WM_SIZE_RATIO))
-        margin = _wm_margin(STICKER_SIZE, shape)
-        fontfile = font_path()
-        draw = (
-            f"drawtext=textfile='{text_path}'"
-            f':fontsize={fsize}:fontcolor=white@{WM_TEXT_ALPHA}'
-            f':borderw={max(1, fsize // 16)}:bordercolor=black@{WM_BORDER_ALPHA}'
-            f':x=w-tw-{margin}:y=h-th-{margin}'
+    if (watermark or '').strip():
+        # Probe actual dimensions: original videos are not necessarily square.
+        import json
+        probe = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'stream=width,height',
+             '-select_streams', 'v:0', '-of', 'json', os.path.join(tmp, 'in' + suffix)],
+            capture_output=True, timeout=FFMPEG_TIMEOUT, check=True,
         )
-        if fontfile:
-            draw += f":fontfile='{fontfile}'"
-        chain += f';{last}{draw}[vw]'
+        stream = json.loads(probe.stdout)['streams'][0]
+        width = height = STICKER_SIZE
+        if shape == SHAPE_ORIGINAL:
+            ratio = STICKER_SIZE / max(stream['width'], stream['height'])
+            width = max(2, int(stream['width'] * ratio) // 2 * 2)
+            height = max(2, int(stream['height'] * ratio) // 2 * 2)
+            # Explicit dimensions keep the overlay aligned with the video.
+            chain = chain.replace(steps[0], f'scale={width}:{height}', 1)
+        overlay_path = os.path.join(tmp, 'watermark.png')
+        watermark_layer(width, height, watermark, shape, color).save(overlay_path)
+        overlay_index = 2 if shape == SHAPE_ROUND else 1
+        inputs += ['-loop', '1', '-framerate', str(fps), '-t', str(VIDEO_MAX_SECONDS), '-i', overlay_path]
+        chain += f';{last}[{overlay_index}:v]overlay=0:0:shortest=1:format=auto,format=yuva420p[vw]'
         last = '[vw]'
 
     return inputs, chain, last
@@ -253,6 +218,7 @@ def video_to_webm(
     suffix: str = '.mp4',
     shape: str = SHAPE_ORIGINAL,
     watermark: str = '',
+    color: str = DEFAULT_COLOR,
 ) -> bytes:
     """convertit une video / GIF en sticker video webm VP9 (512px, 3s max, 30fps)"""
     with tempfile.TemporaryDirectory() as tmp:
@@ -261,7 +227,7 @@ def video_to_webm(
         with open(src, 'wb') as fh:
             fh.write(data)
 
-        inputs, chain, last = _video_filters(tmp, shape, watermark, 30)
+        inputs, chain, last = _video_filters(tmp, shape, watermark, 30, color, suffix)
 
         out = b''
         for crf in (32, 40, 50):
@@ -285,6 +251,7 @@ def any_to_animated_webp(
     suffix: str,
     shape: str = SHAPE_ORIGINAL,
     watermark: str = '',
+    color: str = DEFAULT_COLOR,
 ) -> bytes:
     """convertit une video/webm en webp anime (format attendu par WhatsApp)"""
     with tempfile.TemporaryDirectory() as tmp:
@@ -293,7 +260,7 @@ def any_to_animated_webp(
         with open(src, 'wb') as fh:
             fh.write(data)
 
-        inputs, chain, last = _video_filters(tmp, shape, watermark, 15)
+        inputs, chain, last = _video_filters(tmp, shape, watermark, 15, color, suffix)
 
         _run([
             'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
@@ -307,8 +274,8 @@ def any_to_animated_webp(
         return open(dst, 'rb').read()
 
 
-def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark: str = '') -> bytes:
+def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark: str = '', color: str = DEFAULT_COLOR) -> bytes:
     """point d'entree unique pour WhatsApp : renvoie toujours du webp"""
     if suffix in ('.webm', '.mp4', '.gif'):
-        return any_to_animated_webp(data, suffix, shape, watermark)
-    return image_to_webp(data, shape, watermark)
+        return any_to_animated_webp(data, suffix, shape, watermark, color)
+    return image_to_webp(data, shape, watermark, color)

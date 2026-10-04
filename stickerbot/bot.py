@@ -33,6 +33,7 @@ STEP_TITLE = 'title'
 STEP_LINK = 'link'
 STEP_SHAPE = 'shape'
 STEP_WM = 'watermark'
+STEP_COLOR = 'watermark_color'
 
 # les conversions ffmpeg/PIL sont lourdes : on limite le nombre simultane
 # (mais on ne bloque JAMAIS la boucle d'evenements -> les autres users
@@ -139,6 +140,7 @@ async def build_input_sticker(context, kind, file_id, suffix, emoji, active) -> 
     """
     shape = active.get('shape', converter.SHAPE_ORIGINAL)
     watermark = (active.get('watermark') or '').strip()
+    color = active.get('watermark_color', '#FFFFFF')
 
     if kind == 'animated':
         # les .tgs (stickers animes Telegram) ne peuvent pas etre retouches
@@ -150,10 +152,10 @@ async def build_input_sticker(context, kind, file_id, suffix, emoji, active) -> 
     raw = await download(context, file_id)
 
     if kind in ('photo', 'static'):
-        data = await run_convert(converter.image_to_webp, raw, shape, watermark)
+        data = await run_convert(converter.image_to_webp, raw, shape, watermark, color)
         return InputSticker(sticker=data, emoji_list=[emoji], format='static')
 
-    data = await run_convert(converter.video_to_webm, raw, suffix, shape, watermark)
+    data = await run_convert(converter.video_to_webm, raw, suffix, shape, watermark, color)
     return InputSticker(sticker=data, emoji_list=[emoji], format='video')
 
 
@@ -171,6 +173,7 @@ async def push_sticker(context, active, input_sticker, user_id) -> None:
             user_id, active['name'], active['title'],
             active.get('shape', converter.SHAPE_ORIGINAL),
             active.get('watermark', ''),
+            active.get('watermark_color', '#FFFFFF'),
         )
 
     else:
@@ -335,7 +338,16 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await reply(update, S.ASK_SHAPE, reply_markup=kb.shape_choice())
 
     if step == STEP_WM:
-        return await apply_watermark(update, context, text[:24])
+        if len(text) > 100:
+            return await reply(update, '⚠️ Écriture trop longue : maximum 100 caractères.')
+        return await apply_watermark(update, context, text)
+
+    if step == STEP_COLOR:
+        try:
+            color = converter.normalize_color(kb.COLOR_CHOICES.get(text, text))
+        except ValueError:
+            return await reply(update, S.BAD_COLOR, reply_markup=kb.color_menu())
+        return await finish_style(update, context, color)
 
 
     await reply(update, S.NO_ACTIVE_PACK, reply_markup=kb.main_menu(is_admin(user.id)))
@@ -354,7 +366,16 @@ async def apply_shape(update: Update, context: ContextTypes.DEFAULT_TYPE, shape:
 
 
 async def apply_watermark(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """etape 2 du style : l'ecriture affichee en bas a droite de chaque sticker"""
+    """Store text, then let the user choose its color."""
+    context.user_data['watermark'] = (text or '').strip()
+    if text.strip():
+        context.user_data['step'] = STEP_COLOR
+        return await reply(update, S.ASK_COLOR, reply_markup=kb.color_menu())
+    return await finish_style(update, context, '#FFFFFF')
+
+
+async def finish_style(update, context, color):
+    text = context.user_data.pop('watermark', '')
     shape = context.user_data.pop('shape', converter.SHAPE_ORIGINAL)
     watermark = (text or '').strip()
     context.user_data['step'] = None
@@ -370,23 +391,25 @@ async def apply_watermark(update: Update, context: ContextTypes.DEFAULT_TYPE, te
             'id': None,
             'shape': shape,
             'watermark': watermark,
+            'watermark_color': color,
         }
         context.user_data['active'] = active
     elif active:
         active['shape'] = shape
         active['watermark'] = watermark
+        active['watermark_color'] = color
         if active.get('id'):
-            db.set_pack_style(active['id'], shape, watermark)
+            db.set_pack_style(active['id'], shape, watermark, color)
     else:
         return await reply(update, S.NO_ACTIVE_PACK, reply_markup=kb.main_menu(is_admin(update.effective_user.id)))
 
     return await reply(
         update,
         S.PACK_READY.format(
-            title=active['title'],
+            title=html.escape(active['title']),
             link=pack_link(active['name']),
             shape=S.SHAPE_LABELS[shape],
-            wm=watermark or 'aucune',
+            wm=html.escape(watermark) + ' · ' + color if watermark else 'aucune',
         ),
         reply_markup=kb.pack_menu(),
     )
@@ -685,13 +708,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'name': row['name'], 'title': row['title'], 'created': True, 'id': row['id'],
             'shape': (row['shape'] if 'shape' in row.keys() else None) or converter.SHAPE_ORIGINAL,
             'watermark': (row['watermark'] if 'watermark' in row.keys() else '') or '',
+            'watermark_color': row['watermark_color'] if 'watermark_color' in row.keys() else '#FFFFFF',
         }
         await query.edit_message_text(
             S.PACK_READY.format(
                 title=row['title'],
                 link=pack_link(row['name']),
                 shape=S.SHAPE_LABELS[context.user_data['active']['shape']],
-                wm=context.user_data['active']['watermark'] or 'aucune',
+                wm=html.escape(context.user_data['active']['watermark']) or 'aucune',
             ),
             parse_mode=ParseMode.HTML,
         )
