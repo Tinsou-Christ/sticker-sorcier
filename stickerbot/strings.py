@@ -142,3 +142,15 @@ ADMIN_PANEL = (
 )
 NOT_ADMIN = "🚫 Réservé à l'administrateur du bot."
 BROADCAST_DONE = "📣 Diffusion terminée : ✅ {ok} • ⚠️ {failed}"
+
+CONVERT_ASK = (
+    "🔄 <b>Conversion vers WhatsApp</b>\n\n"
+    "Envoie-moi <b>n'importe quel sticker</b> 🧩 (ou photo 🖼, vidéo 🎬, GIF 🎞).\n"
+    "Pas besoin de créer un pack : je le convertis directement ✨"
+)
+CONVERT_CHOICE = (
+    "🟢 <b>Convertir vers WhatsApp</b>\n\n"
+    "📦 Ce sticker vient du pack <b>{title}</b> ({count} stickers).\n"
+    "Que veux-tu convertir ?"
+)
+CONVERT_ONE_ASK = "🟢 <b>Convertir vers WhatsApp</b>\n\nJe convertis ce média en sticker WhatsApp ?"

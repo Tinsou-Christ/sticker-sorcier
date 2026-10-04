@@ -18,11 +18,13 @@ BTN_WA = '🟢 Vers WhatsApp'
 BTN_ADMIN = '🛡 Admin'
 BTN_STYLE = '🎨 Format & écriture'
 BTN_NO_WM = '🚫 Sans écriture'
+BTN_CONVERT = '🔄 Convertir en WhatsApp'
 
 
 def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(BTN_NEW), KeyboardButton(BTN_MY_PACKS)],
+        [KeyboardButton(BTN_CONVERT)],
         [KeyboardButton(BTN_TOP), KeyboardButton(BTN_HELP)],
     ]
     if is_admin:
