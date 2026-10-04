@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /usr/src/app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core && \
+    apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core fonts-noto-core fonts-noto-extra fonts-noto-color-emoji fontconfig libpango-1.0-0 libpangocairo-1.0-0 libcairo2 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

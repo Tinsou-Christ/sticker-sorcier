@@ -107,3 +107,19 @@ def pack_actions(pack_name: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton('🔗 Voir le pack', url=f'https://t.me/addstickers/{pack_name}')],
         ]
     )
+
+
+COLOR_CHOICES = {
+    '⚪ Blanc': '#FFFFFF', '⚫ Noir': '#000000', '🔴 Rouge': '#FF0000',
+    '🔵 Bleu': '#0088FF', '🟢 Vert': '#00CC66', '🟡 Jaune': '#FFFF00',
+    '🩷 Rose': '#FF69B4', '🟣 Violet': '#9933FF', '🟠 Orange': '#FF8800',
+}
+
+
+def color_menu() -> ReplyKeyboardMarkup:
+    labels = list(COLOR_CHOICES)
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(label) for label in labels[i:i + 3]] for i in range(0, len(labels), 3)]
+        + [[KeyboardButton(BTN_CANCEL)]], resize_keyboard=True,
+        input_field_placeholder='Choisis une couleur ou envoie #RRGGBB 🎨',
+    )
