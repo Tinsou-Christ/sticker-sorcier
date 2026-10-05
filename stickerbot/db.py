@@ -14,9 +14,13 @@ def init():
     directory = os.path.dirname(os.path.abspath(DB_PATH))
     if directory:
         os.makedirs(directory, exist_ok=True)
-    _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    _conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     _conn.row_factory = sqlite3.Row
     with _lock:
+        # WAL rend les écritures plus sûres et évite qu'une lecture bloque le bot.
+        _conn.execute('PRAGMA journal_mode=WAL')
+        _conn.execute('PRAGMA synchronous=FULL')
+        _conn.execute('PRAGMA busy_timeout=30000')
         _conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (

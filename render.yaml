@@ -2,7 +2,9 @@ services:
   - type: web
     name: stickers-bot
     runtime: docker
-    plan: free
+    # Un disque persistant exige une instance payante sur Render.
+    # Le plan gratuit efface la base SQLite lors des redéploiements.
+    plan: starter
     dockerfilePath: ./Dockerfile
     healthCheckPath: /
     envVars:
@@ -19,6 +21,6 @@ services:
       - key: DB_PATH
         value: /var/data/bot.db
     disk:
-      name: data
+      name: stickers-data
       mountPath: /var/data
       sizeGB: 1

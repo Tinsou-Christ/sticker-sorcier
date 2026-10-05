@@ -8,3 +8,5 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Keep the Telegram bot's SQLite database on Render's `/var/data` persistent disk because the container filesystem is replaced on deploy.

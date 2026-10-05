@@ -20,6 +20,7 @@ Bot Telegram qui crée des packs de stickers à partir de **photos, vidéos, GIF
 
 1. Pousse ce dossier sur GitHub.
 2. Sur Render : **New → Web Service → Docker** (ou « Blueprint » avec `render.yaml`).
+   Utilise bien le Blueprint fourni : il crée une instance **Starter** et monte le disque permanent `stickers-data` sur `/var/data`.
 3. Variables d'environnement :
 
 | Variable | Description |
@@ -32,6 +33,12 @@ Bot Telegram qui crée des packs de stickers à partir de **photos, vidéos, GIF
 | `DB_PATH` | chemin SQLite (ex. `/var/data/bot.db` avec un disque Render) |
 
 Le service expose un petit serveur HTTP sur `$PORT` pour le health check de Render.
+
+### 💾 Conservation des informations
+
+La base est enregistrée dans `/var/data/bot.db`, sur le disque permanent Render. Les utilisateurs, packs, classements, bannissements, formats, écritures et couleurs restent donc présents après un redéploiement ou un redémarrage.
+
+⚠️ Render ne propose pas de disque permanent sur son offre gratuite. Le fichier `render.yaml` utilise donc le plan `starter`. Ne supprime pas le disque `stickers-data` et ne change pas `DB_PATH`, sinon les anciennes informations ne seront plus accessibles.
 
 ## 🐳 Lancer en local
 
