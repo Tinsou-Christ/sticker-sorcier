@@ -23,6 +23,7 @@ import db
 import keyboards as kb
 import strings as S
 import wastickers
+from text_renderer import normalize_color
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +346,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == STEP_COLOR:
         try:
             color_value, color_name = kb.selected_color(text)
-            color = converter.normalize_color(color_value)
+            color = normalize_color(color_value)
         except ValueError:
             return await reply(update, S.BAD_COLOR, reply_markup=kb.color_menu())
         await reply(update, S.COLOR_CHOSEN.format(color=html.escape(color_name)))
