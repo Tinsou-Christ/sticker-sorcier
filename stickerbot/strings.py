@@ -157,3 +157,4 @@ CONVERT_ONE_ASK = "🟢 <b>Convertir vers WhatsApp</b>\n\nJe convertis ce média
 
 ASK_COLOR = "🎨 <b>Couleur de l’écriture</b>\nChoisis une couleur ou envoie ton code personnalisé, par exemple <code>#FF8800</code>."
 BAD_COLOR = "⚠️ Choisis une couleur ci-dessous ou un code de 6 chiffres/lettres comme <code>#FF0000</code>."
+COLOR_CHOSEN = "✅ Couleur choisie : <b>{color}</b>"
