@@ -344,9 +344,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if step == STEP_COLOR:
         try:
-            color = converter.normalize_color(kb.COLOR_CHOICES.get(text, text))
+            color_value, color_name = kb.selected_color(text)
+            color = converter.normalize_color(color_value)
         except ValueError:
             return await reply(update, S.BAD_COLOR, reply_markup=kb.color_menu())
+        await reply(update, S.COLOR_CHOSEN.format(color=html.escape(color_name)))
         return await finish_style(update, context, color)
 
 
@@ -409,7 +411,7 @@ async def finish_style(update, context, color):
             title=html.escape(active['title']),
             link=pack_link(active['name']),
             shape=S.SHAPE_LABELS[shape],
-            wm=html.escape(watermark) + ' · ' + color if watermark else 'aucune',
+            wm=html.escape(watermark) + ' · ' + kb.color_label(color) if watermark else 'aucune',
         ),
         reply_markup=kb.pack_menu(),
     )

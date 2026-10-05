@@ -113,7 +113,24 @@ COLOR_CHOICES = {
     '⚪ Blanc': '#FFFFFF', '⚫ Noir': '#000000', '🔴 Rouge': '#FF0000',
     '🔵 Bleu': '#0088FF', '🟢 Vert': '#00CC66', '🟡 Jaune': '#FFFF00',
     '🩷 Rose': '#FF69B4', '🟣 Violet': '#9933FF', '🟠 Orange': '#FF8800',
+    '◻️ Transparent': '#FFFFFF00',
 }
+
+
+def selected_color(value: str):
+    """Recognize keyboard labels even when Telegram changes emoji selectors."""
+    cleaned = (value or '').replace('\ufe0f', '').strip()
+    for label, color in COLOR_CHOICES.items():
+        if cleaned == label.replace('\ufe0f', ''):
+            return color, label
+    return value, value.upper()
+
+
+def color_label(color: str) -> str:
+    for label, value in COLOR_CHOICES.items():
+        if value == color:
+            return label
+    return color
 
 
 def color_menu() -> ReplyKeyboardMarkup:
