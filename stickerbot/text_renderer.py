@@ -19,6 +19,8 @@ def normalize_color(value: str) -> str:
 
 def render_text(text: str, max_width: int, max_height: int, size: int, color: str) -> Image.Image:
     """Render shaped multi-script text without altering decorative Unicode letters."""
+    normalized = normalize_color(color)
+    alpha = int(normalized[7:9], 16) / 255 if len(normalized) == 9 else 1
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, max_width, max_height)
     ctx = cairo.Context(surface)
     layout = pangocairocffi.create_layout(ctx)
@@ -39,12 +41,10 @@ def render_text(text: str, max_width: int, max_height: int, size: int, color: st
         raise ValueError('Cette écriture contient un caractère sans police disponible. Essaie une autre écriture.')
     ctx.move_to(2 - pango.units_to_double(ink.x), 2 - pango.units_to_double(ink.y))
     pangocairocffi.layout_path(ctx, layout)
-    ctx.set_source_rgba(0, 0, 0, 0.25)
+    ctx.set_source_rgba(0, 0, 0, 0.25 * alpha)
     ctx.set_line_width(1.5)
     ctx.stroke_preserve()
-    normalized = normalize_color(color)
     rgb = tuple(int(normalized[i:i + 2], 16) / 255 for i in (1, 3, 5))
-    alpha = int(normalized[7:9], 16) / 255 if len(normalized) == 9 else 1
     ctx.set_source_rgba(*rgb, 0.45 * alpha)
     ctx.fill()
     buffer = BytesIO()
