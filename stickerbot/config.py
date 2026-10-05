@@ -17,7 +17,8 @@ CREATOR_URL = os.environ.get('CREATOR_URL', 'https://t.me/telegram').strip()
 CHANNEL_URL = os.environ.get('CHANNEL_URL', 'https://t.me/telegram').strip()
 GROUP_URL = os.environ.get('GROUP_URL', 'https://t.me/telegram').strip()
 
-DB_PATH = os.environ.get('DB_PATH', os.path.join(os.path.dirname(__file__), 'bot.db'))
+DEFAULT_DB_PATH = '/var/data/bot.db' if os.environ.get('RENDER') else os.path.join(os.path.dirname(__file__), 'bot.db')
+DB_PATH = os.environ.get('DB_PATH', DEFAULT_DB_PATH)
 PORT = int(os.environ.get('PORT', '8080'))
 
 # limites
