@@ -59,7 +59,16 @@ def build_wastickers_files(
     if not stickers_webp:
         raise ValueError('aucun sticker a empaqueter')
 
-    batches = [stickers_webp[i:i + batch_size] for i in range(0, len(stickers_webp), batch_size)]
+    # WhatsApp refuse un pack melangeant animes et statiques, et exige 3 stickers min
+    animated = [w for w in stickers_webp if b'ANIM' in w[:200]]
+    static = [w for w in stickers_webp if b'ANIM' not in w[:200]]
+    batches = []
+    for group in (static, animated):
+        for i in range(0, len(group), batch_size):
+            batch = group[i:i + batch_size]
+            while len(batch) < 3:
+                batch = batch + batch[:3 - len(batch)]
+            batches.append(batch)
     total_files = len(batches)
 
     safe_title = (title or 'Pack').strip()[:TITLE_MAX_LEN] or 'Pack'

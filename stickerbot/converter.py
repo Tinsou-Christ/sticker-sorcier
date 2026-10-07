@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 STICKER_SIZE = 512
 VIDEO_MAX_SECONDS = 3
 VIDEO_MAX_BYTES = 256 * 1024
+WA_STATIC_MAX_BYTES = 100 * 1024
+WA_ANIMATED_MAX_BYTES = 500 * 1024
 
 SHAPE_ORIGINAL = 'original'
 SHAPE_SQUARE = 'square'
@@ -260,22 +262,40 @@ def any_to_animated_webp(
         with open(src, 'wb') as fh:
             fh.write(data)
 
-        inputs, chain, last = _video_filters(tmp, shape, watermark, 15, color, suffix)
-
-        _run([
-            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-            '-t', str(VIDEO_MAX_SECONDS), '-i', src, *inputs,
-            '-filter_complex', chain, '-map', last,
-            '-t', str(VIDEO_MAX_SECONDS),
-            '-loop', '0', '-an', '-fps_mode', 'passthrough',
-            '-c:v', 'libwebp', '-quality', '55', '-compression_level', '6',
-            dst,
-        ])
-        return open(dst, 'rb').read()
+        out = b''
+        # WhatsApp refuse les stickers animes de plus de 500 Ko
+        for fps, quality in ((15, 55), (12, 40), (10, 25), (8, 10)):
+            inputs, chain, last = _video_filters(tmp, shape, watermark, fps, color, suffix)
+            _run([
+                'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+                '-t', str(VIDEO_MAX_SECONDS), '-i', src, *inputs,
+                '-filter_complex', chain, '-map', last,
+                '-t', str(VIDEO_MAX_SECONDS),
+                '-loop', '0', '-an', '-fps_mode', 'passthrough',
+                '-c:v', 'libwebp', '-quality', str(quality), '-compression_level', '6',
+                dst,
+            ])
+            out = open(dst, 'rb').read()
+            if len(out) <= WA_ANIMATED_MAX_BYTES:
+                break
+        return out
 
 
 def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark: str = '', color: str = DEFAULT_COLOR) -> bytes:
     """point d'entree unique pour WhatsApp : renvoie toujours du webp"""
+    # WhatsApp exige exactement 512x512 : le format original devient carre
+    if shape == SHAPE_ORIGINAL:
+        shape = SHAPE_SQUARE
     if suffix in ('.webm', '.mp4', '.gif'):
         return any_to_animated_webp(data, suffix, shape, watermark, color)
-    return image_to_webp(data, shape, watermark, color)
+    im = Image.open(BytesIO(data)).convert('RGBA')
+    im = draw_watermark(_apply_shape(im, shape), watermark, shape, color)
+    out = b''
+    # WhatsApp refuse les stickers statiques de plus de 100 Ko
+    for quality in (85, 70, 55, 40, 25, 10):
+        buf = BytesIO()
+        im.save(buf, 'WEBP', quality=quality, method=6)
+        out = buf.getvalue()
+        if len(out) <= WA_STATIC_MAX_BYTES:
+            break
+    return out
