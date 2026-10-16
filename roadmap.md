@@ -10,3 +10,9 @@
 - [x] Utiliser automatiquement `/var/data/bot.db` sur Render.
 - [x] Sécuriser les écritures SQLite concurrentes.
 - [ ] Vérifier les données existantes après le prochain redéploiement Render.
+
+# Création de thèmes Telegram
+- [x] Bouton « 🌈 Créer un thème » dans le menu principal.
+- [x] Générer un .attheme (couleurs extraites de la photo + photo en fond d'écran).
+- [x] Tester la génération localement (offset du fond d'écran, palette).
+- [ ] Tester dans Telegram (Android + iPhone) après redéploiement Render.
