@@ -158,3 +158,20 @@ CONVERT_ONE_ASK = "🟢 <b>Convertir vers WhatsApp</b>\n\nJe convertis ce média
 ASK_COLOR = "🎨 <b>Couleur de l’écriture</b>\nChoisis une couleur ou envoie ton code personnalisé, par exemple <code>#FF8800</code>."
 BAD_COLOR = "⚠️ Choisis une couleur ci-dessous ou un code de 6 chiffres/lettres comme <code>#FF0000</code>."
 COLOR_CHOSEN = "✅ Couleur choisie : <b>{color}</b>"
+
+THEME_ASK = (
+    "🌈 <b>Création de thème Telegram</b>\n\n"
+    "Envoie-moi la <b>photo</b> qui servira de base à ton thème 🖼\n"
+    "J'en extrais les couleurs pour te créer un thème complet : fonds, écritures, "
+    "bulles, vocaux, boutons... tout sera assorti à ta photo ✨\n\n"
+    "📱 Le fichier fonctionne sur <b>Android</b> et <b>iPhone</b>."
+)
+THEME_WORKING = "⏳ Je crée ton thème à partir de la photo..."
+THEME_DONE = (
+    "🌈 <b>Voici ton thème !</b>\n\n"
+    "Ouvre le fichier <b>.attheme</b> avec Telegram pour l'appliquer :\n"
+    "🤖 <b>Android</b> : touche le fichier → <i>Appliquer</i>\n"
+    "🍏 <b>iPhone</b> : ouvre le fichier → <i>Partager</i> → <i>Telegram</i>\n\n"
+    "La photo est aussi mise en fond d'écran du thème 🖼"
+)
+THEME_BAD_MEDIA = "⚠️ Pour créer un thème, envoie une <b>photo</b> 🖼 (pas une vidéo ni un sticker)."
