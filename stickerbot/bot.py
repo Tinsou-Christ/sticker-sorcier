@@ -684,6 +684,30 @@ async def _convert_one_job(context, chat_id, media):
 
 
 
+async def _theme_job(context, chat_id, file_id, waiting):
+    """cree un theme .attheme a partir d'une photo, en tache de fond"""
+    try:
+        raw = await download(context, file_id)
+        attheme = await run_convert(themes.build_attheme, raw)
+        await context.bot.send_document(
+            chat_id, document=attheme, filename='mon_theme.attheme',
+            caption=S.THEME_DONE, parse_mode=ParseMode.HTML,
+        )
+        try:
+            await waiting.delete()
+        except TelegramError:
+            pass
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('creation de theme echouee')
+        try:
+            await waiting.edit_text(
+                S.ERROR.format(error=html.escape(str(exc)[:200])),
+                parse_mode=ParseMode.HTML,
+            )
+        except TelegramError:
+            pass
+
+
 # --------------------------------------------------------------------------
 # callbacks
 # --------------------------------------------------------------------------
