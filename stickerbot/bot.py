@@ -22,6 +22,7 @@ import converter
 import db
 import keyboards as kb
 import strings as S
+import themes
 import wastickers
 from text_renderer import normalize_color
 
@@ -292,6 +293,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == kb.BTN_CONVERT:
         context.user_data['convert_mode'] = True
         return await reply(update, S.CONVERT_ASK, reply_markup=kb.cancel_menu())
+    if text == kb.BTN_THEME:
+        context.user_data.clear()
+        context.user_data['theme_mode'] = True
+        return await reply(update, S.THEME_ASK, reply_markup=kb.cancel_menu())
     if text == kb.BTN_WA:
         active = context.user_data.get('active')
         if not active:
@@ -446,6 +451,16 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     media = extract_media(update.effective_message)
     if not media:
         return await reply(update, S.UNSUPPORTED)
+
+    if context.user_data.get('theme_mode'):
+        if media[0] != 'photo':
+            return await reply(update, S.THEME_BAD_MEDIA, reply_markup=kb.cancel_menu())
+        context.user_data['theme_mode'] = False
+        waiting = await reply(update, S.THEME_WORKING)
+        context.application.create_task(
+            _theme_job(context, update.effective_chat.id, media[1], waiting)
+        )
+        return
 
     active = context.user_data.get('active')
     if not active or context.user_data.get('convert_mode'):
