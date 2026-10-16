@@ -22,6 +22,7 @@ import converter
 import db
 import keyboards as kb
 import strings as S
+import themes
 import wastickers
 from text_renderer import normalize_color
 
@@ -292,6 +293,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == kb.BTN_CONVERT:
         context.user_data['convert_mode'] = True
         return await reply(update, S.CONVERT_ASK, reply_markup=kb.cancel_menu())
+    if text == kb.BTN_THEME:
+        context.user_data.clear()
+        context.user_data['theme_mode'] = True
+        return await reply(update, S.THEME_ASK, reply_markup=kb.cancel_menu())
     if text == kb.BTN_WA:
         active = context.user_data.get('active')
         if not active:
@@ -446,6 +451,16 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     media = extract_media(update.effective_message)
     if not media:
         return await reply(update, S.UNSUPPORTED)
+
+    if context.user_data.get('theme_mode'):
+        if media[0] != 'photo':
+            return await reply(update, S.THEME_BAD_MEDIA, reply_markup=kb.cancel_menu())
+        context.user_data['theme_mode'] = False
+        waiting = await reply(update, S.THEME_WORKING)
+        context.application.create_task(
+            _theme_job(context, update.effective_chat.id, media[1], waiting)
+        )
+        return
 
     active = context.user_data.get('active')
     if not active or context.user_data.get('convert_mode'):
@@ -667,6 +682,30 @@ async def _convert_one_job(context, chat_id, media):
             chat_id, S.ERROR.format(error=html.escape(str(exc)[:200])), parse_mode=ParseMode.HTML
         )
 
+
+
+async def _theme_job(context, chat_id, file_id, waiting):
+    """cree un theme .attheme a partir d'une photo, en tache de fond"""
+    try:
+        raw = await download(context, file_id)
+        attheme = await run_convert(themes.build_attheme, raw)
+        await context.bot.send_document(
+            chat_id, document=attheme, filename='mon_theme.attheme',
+            caption=S.THEME_DONE, parse_mode=ParseMode.HTML,
+        )
+        try:
+            await waiting.delete()
+        except TelegramError:
+            pass
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('creation de theme echouee')
+        try:
+            await waiting.edit_text(
+                S.ERROR.format(error=html.escape(str(exc)[:200])),
+                parse_mode=ParseMode.HTML,
+            )
+        except TelegramError:
+            pass
 
 
 # --------------------------------------------------------------------------
