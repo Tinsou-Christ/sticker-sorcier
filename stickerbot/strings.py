@@ -121,7 +121,11 @@ WA_START = (
     "continue de fonctionner normalement pour toi et pour les autres 🙂"
 )
 WA_SPLIT = "⚠️ Pack trop grand — divisé en <b>{files} fichiers</b> max {per} stickers."
-WA_DONE = "🟢 <b>Prêt pour WhatsApp !</b>\nOuvre les fichiers avec l'application <i>Sticker Maker</i>."
+WA_DONE = (
+    "🟢 <b>Fichiers vérifiés pour WhatsApp !</b>\n"
+    "Ouvre les fichiers avec <i>Sticker Maker</i> à jour. Les packs animés et statiques sont séparés.\n"
+    "Un média seul est répété pour atteindre le minimum de 3 stickers exigé par WhatsApp."
+)
 
 LEADERBOARD_HEADER = "🏆 <b>Classement des créateurs</b> 🎉\n"
 LEADERBOARD_ROW = "{medal} <b>{name}</b>\n     📦 {packs} packs • 🔢 {stickers} stickers"
@@ -164,14 +168,15 @@ THEME_ASK = (
     "Envoie-moi la <b>photo</b> qui servira de base à ton thème 🖼\n"
     "J'en extrais les couleurs pour te créer un thème complet : fonds, écritures, "
     "bulles, vocaux, boutons... tout sera assorti à ta photo ✨\n\n"
-    "📱 Le fichier fonctionne sur <b>Android</b> et <b>iPhone</b>."
+    "🤖 Le fichier <b>.attheme</b> est destiné à <b>Telegram Android</b>.\n"
+    "🍏 iPhone utilise un autre format : ce fichier ne s’y applique pas."
 )
 THEME_WORKING = "⏳ Je crée ton thème à partir de la photo..."
 THEME_DONE = (
     "🌈 <b>Voici ton thème !</b>\n\n"
     "Ouvre le fichier <b>.attheme</b> avec Telegram pour l'appliquer :\n"
     "🤖 <b>Android</b> : touche le fichier → <i>Appliquer</i>\n"
-    "🍏 <b>iPhone</b> : ouvre le fichier → <i>Partager</i> → <i>Telegram</i>\n\n"
+    "🍏 <b>iPhone</b> : ce format n’est pas compatible.\n\n"
     "La photo est aussi mise en fond d'écran du thème 🖼"
 )
 THEME_BAD_MEDIA = "⚠️ Pour créer un thème, envoie une <b>photo</b> 🖼 (pas une vidéo ni un sticker)."

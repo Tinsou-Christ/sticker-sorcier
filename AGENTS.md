@@ -10,3 +10,6 @@
 <!-- LOVABLE:END -->
 
 - Keep the Telegram bot's SQLite database on Render's `/var/data` persistent disk because the container filesystem is replaced on deploy.
+- Validate final decoded WhatsApp media at conversion and archive boundaries through wa_validation; encoder settings alone do not guarantee importer compliance.
+- Generate Android theme wallpapers with WPS/JPEG/WPE framing because Telegram computes its wallpaper offset from WPS, not a serialized offset field.
+- Keep WhatsApp choice callbacks short and resolve source pack names from user_data because Telegram callback payloads have a byte limit.

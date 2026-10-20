@@ -291,6 +291,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == kb.BTN_DONE:
         return await finish_pack(update, context)
     if text == kb.BTN_CONVERT:
+        context.user_data.pop('theme_mode', None)
+        context.user_data.pop('step', None)
+        context.user_data.pop('wa_pending', None)
         context.user_data['convert_mode'] = True
         return await reply(update, S.CONVERT_ASK, reply_markup=kb.cancel_menu())
     if text == kb.BTN_THEME:
@@ -300,6 +303,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == kb.BTN_WA:
         active = context.user_data.get('active')
         if not active:
+            context.user_data.pop('theme_mode', None)
+            context.user_data.pop('step', None)
             context.user_data['convert_mode'] = True
             return await reply(update, S.CONVERT_ASK, reply_markup=kb.cancel_menu())
         return await export_whatsapp(update, context, active['name'])
@@ -466,6 +471,7 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not active or context.user_data.get('convert_mode'):
         # conversion directe vers WhatsApp, sans creer de pack
         context.user_data['wa_pending'] = media
+        await reply(update, '✅ Sticker reçu ! Je prépare les options de conversion 🟢')
         set_name = media[5]
         count = 0
         title = ''
@@ -475,6 +481,7 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 count, title = len(source.stickers), source.title
             except TelegramError:
                 set_name = None
+        context.user_data['wa_source'] = set_name
         return await reply(
             update,
             S.CONVERT_CHOICE.format(title=html.escape(title), count=count) if set_name else S.CONVERT_ONE_ASK,
@@ -615,6 +622,23 @@ async def export_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 
 async def _export_whatsapp_job(context, chat_id, set_name):
     try:
+        await _build_whatsapp_export(context, chat_id, set_name)
+    except Exception as exc:
+        await report_job_error(context, chat_id, exc)
+
+
+async def report_job_error(context, chat_id, exc):
+    logger.error('conversion whatsapp echouee', exc_info=(type(exc), exc, exc.__traceback__))
+    try:
+        await context.bot.send_message(
+            chat_id, S.ERROR.format(error=html.escape(str(exc)[:200])), parse_mode=ParseMode.HTML
+        )
+    except TelegramError:
+        logger.exception('impossible de transmettre le message d’erreur')
+
+
+async def _build_whatsapp_export(context, chat_id, set_name):
+    try:
         source = await context.bot.get_sticker_set(set_name)
     except TelegramError as exc:
         return await context.bot.send_message(
@@ -622,27 +646,22 @@ async def _export_whatsapp_job(context, chat_id, set_name):
         )
 
     webps = []
+    failed = 0
     for st in source.stickers[:config.MAX_STICKERS_PER_PACK]:
         if st.is_animated:
+            failed += 1
             continue  # les stickers .tgs ne sont pas supportes par WhatsApp
         suffix = '.webm' if st.is_video else '.webp'
         try:
             raw = await download(context, st.file_id)
             webps.append(await run_convert(converter.to_wa_webp, raw, suffix))
         except Exception as exc:  # noqa: BLE001
+            failed += 1
             logger.warning('conversion whatsapp echouee: %s', exc)
 
     if not webps:
         return await context.bot.send_message(
             chat_id, S.ERROR.format(error='aucun sticker convertible'), parse_mode=ParseMode.HTML
-        )
-
-    total_files = wastickers.files_count_for(len(webps), config.WA_STICKERS_PER_FILE)
-    if total_files > 1:
-        await context.bot.send_message(
-            chat_id,
-            S.WA_SPLIT.format(files=total_files, per=config.WA_STICKERS_PER_FILE),
-            parse_mode=ParseMode.HTML,
         )
 
     tray = await run_convert(wastickers.build_tray_icon_png, webps[0])
@@ -654,6 +673,15 @@ async def _export_whatsapp_job(context, chat_id, set_name):
         tray,
         config.WA_STICKERS_PER_FILE,
     )
+    if len(files) > 1:
+        await context.bot.send_message(
+            chat_id, S.WA_SPLIT.format(files=len(files), per=config.WA_STICKERS_PER_FILE),
+            parse_mode=ParseMode.HTML,
+        )
+    if failed:
+        await context.bot.send_message(
+            chat_id, f'⚠️ {failed} sticker(s) non convertible(s) ignoré(s) (dont les animations .tgs).'
+        )
 
     for filename, buf in files:
         await context.bot.send_document(chat_id, document=buf, filename=filename)
@@ -677,10 +705,7 @@ async def _convert_one_job(context, chat_id, media):
             await context.bot.send_document(chat_id, document=buf, filename=filename)
         await context.bot.send_message(chat_id, S.WA_DONE, parse_mode=ParseMode.HTML)
     except Exception as exc:  # noqa: BLE001
-        logger.exception('conversion directe echouee')
-        await context.bot.send_message(
-            chat_id, S.ERROR.format(error=html.escape(str(exc)[:200])), parse_mode=ParseMode.HTML
-        )
+        await report_job_error(context, chat_id, exc)
 
 
 
@@ -769,8 +794,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith('wa:'):
         return await export_whatsapp(update, context, data[3:])
 
+    if data == 'wa_pack':
+        name = context.user_data.pop('wa_source', None)
+        context.user_data.pop('wa_pending', None)
+        if not name:
+            return await query.edit_message_text(S.CANCELLED, parse_mode=ParseMode.HTML)
+        await query.edit_message_text('📦 Conversion du pack sélectionnée.', parse_mode=ParseMode.HTML)
+        return await export_whatsapp(update, context, name)
+
     if data == 'wa_one':
         media = context.user_data.pop('wa_pending', None)
+        context.user_data.pop('wa_source', None)
         if not media:
             return await query.edit_message_text(S.CANCELLED, parse_mode=ParseMode.HTML)
         await query.edit_message_text(S.WA_START, parse_mode=ParseMode.HTML)
@@ -781,6 +815,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == 'wa_no':
         context.user_data.pop('wa_pending', None)
+        context.user_data.pop('wa_source', None)
         return await query.edit_message_text(S.CANCELLED, parse_mode=ParseMode.HTML)
 
     if data.startswith('del:'):
@@ -844,6 +879,14 @@ async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception('erreur non gerée', exc_info=context.error)
+    if isinstance(update, Update) and update.effective_chat:
+        try:
+            await context.bot.send_message(
+                update.effective_chat.id,
+                '⚠️ Je n’ai pas pu traiter ce message. Réessaie depuis le menu /start.'
+            )
+        except TelegramError:
+            logger.exception('impossible de signaler l’erreur à l’utilisateur')
 
 
 # --------------------------------------------------------------------------
