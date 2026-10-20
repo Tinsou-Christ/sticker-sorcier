@@ -1,4 +1,7 @@
 # Écriture des stickers
+- [ ] Corriger et tester la réception des médias pour la conversion WhatsApp.
+- [ ] Valider les stickers et archives selon les limites WhatsApp avant envoi.
+- [ ] Corriger le format du fond intégré et les couleurs des thèmes.
 - [x] Ajouter une couleur par pack, avec choix prédéfinis, transparent et code personnalisé.
 - [x] Confirmer immédiatement la couleur choisie.
 - [x] Déplacer le texte en bas à gauche sur images et vidéos.

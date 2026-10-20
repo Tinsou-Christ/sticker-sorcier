@@ -2,14 +2,14 @@
 
 Les couleurs du theme (fond, ecritures, bulles, vocaux, icones...) sont
 extraites de la photo, et la photo elle-meme est embarquee comme fond
-d'ecran du theme. Le fichier .attheme s'ouvre sur Android et iPhone.
+d'ecran du theme. Le fichier .attheme est destine a Telegram Android.
 """
 
 import colorsys
 import logging
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +48,14 @@ def _shift(rgb, amount):
 
 def extract_palette(data: bytes):
     """renvoie les couleurs de base du theme a partir de la photo"""
-    im = Image.open(BytesIO(data)).convert('RGB')
+    im = ImageOps.exif_transpose(Image.open(BytesIO(data))).convert('RGB')
     small = im.resize((64, 64), Image.LANCZOS)
     # regroupe les couleurs proches pour trouver les dominantes
     quant = small.quantize(colors=6, method=Image.MEDIANCUT).convert('RGB')
     counts = sorted(quant.getcolors(64 * 64), reverse=True)
     colors = [rgb for _, rgb in counts]
 
-    avg = tuple(sum(c[i] for c in colors) // len(colors) for i in range(3))
+    avg = tuple(sum(count * rgb[i] for count, rgb in counts) // (64 * 64) for i in range(3))
 
     # accent = la couleur la plus vive de la photo
     accent = max(colors, key=lambda c: _saturation(c) * (0.4 + _luminance(c)))
@@ -67,11 +67,12 @@ def extract_palette(data: bytes):
     dominant = colors[0]
     dark_theme = _luminance(avg) < 0.45
     if dark_theme:
-        background = _shift(dominant, -0.75)
-        background2 = _shift(dominant, -0.6)
+        background = _shift(dominant, -0.55)
+        background2 = _shift(dominant, -0.35)
     else:
-        background = _shift(dominant, 0.9)
-        background2 = _shift(dominant, 0.8)
+        # Do not wash colorful photos out into a nearly white interface.
+        background = _shift(dominant, 0.18)
+        background2 = _shift(dominant, 0.30)
 
     # ecriture lisible sur le fond
     text = (255, 255, 255) if _luminance(background) < 0.5 else (20, 20, 20)
@@ -106,6 +107,7 @@ def _theme_keys(p):
     out_text = text if _luminance(bubble_out) < 0.55 else (20, 20, 20)
 
     keys = {
+        'chat_wallpaper': bg,
         # fonds et textes de la liste des discussions
         'dialogBackground': bg,
         'dialogBackgroundGray': bg2,
@@ -655,7 +657,7 @@ def _theme_keys(p):
 
 
 def _wallpaper_jpeg(data: bytes) -> bytes:
-    im = Image.open(BytesIO(data)).convert('RGB')
+    im = ImageOps.exif_transpose(Image.open(BytesIO(data))).convert('RGB')
     if max(im.width, im.height) > WALLPAPER_MAX_SIDE:
         ratio = WALLPAPER_MAX_SIDE / max(im.width, im.height)
         im = im.resize(
@@ -673,15 +675,7 @@ def build_attheme(photo_data: bytes) -> bytes:
     keys = _theme_keys(palette)
     wallpaper = _wallpaper_jpeg(photo_data)
 
-    # l'offset du fond d'ecran depend de la taille du texte : on calcule en 2 passes
-    lines = ['wallpaperFileOffset=0'] + [f'{k}={v}' for k, v in keys.items()]
-    text = '\n'.join(lines).encode('utf-8')
-    offset = len(text) + 1  # +1 pour le saut de ligne avant l'image
-    lines[0] = f'wallpaperFileOffset={offset}'
-    text = '\n'.join(lines).encode('utf-8')
-    # la ligne peut changer de longueur : on recalcule une derniere fois
-    offset = len(text) + 1
-    lines[0] = f'wallpaperFileOffset={offset}'
-    text = '\n'.join(lines).encode('utf-8')
-
-    return text + b'\n' + wallpaper
+    # Telegram Android computes the offset from WPS itself. A numeric
+    # wallpaperFileOffset entry alone is ignored/overwritten by its parser.
+    text = '\n'.join(f'{k}={v}' for k, v in keys.items()).encode('utf-8')
+    return text + b'\nWPS\n' + wallpaper + b'\nWPE\n'

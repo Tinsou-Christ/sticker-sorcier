@@ -12,6 +12,7 @@ from io import BytesIO
 
 from PIL import Image, ImageDraw
 from text_renderer import DEFAULT_COLOR, render_text
+from wa_validation import validate_webp
 
 logger = logging.getLogger(__name__)
 
@@ -264,21 +265,30 @@ def any_to_animated_webp(
 
         out = b''
         # WhatsApp refuse les stickers animes de plus de 500 Ko
-        for fps, quality in ((15, 55), (12, 40), (10, 25), (8, 10)):
+        for fps, quality, content_size in ((15, 55, 512), (12, 40, 512), (10, 25, 448), (8, 10, 384), (6, 5, 256)):
             inputs, chain, last = _video_filters(tmp, shape, watermark, fps, color, suffix)
+            # Keep the final canvas 512px; reducing detail makes even noisy
+            # clips compressible without ever returning an oversized file.
+            if content_size < STICKER_SIZE:
+                chain += (f';{last}scale={content_size}:{content_size},format=yuva420p,'
+                          f'pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black@0[wa]')
+                last = '[wa]'
             _run([
                 'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
                 '-t', str(VIDEO_MAX_SECONDS), '-i', src, *inputs,
                 '-filter_complex', chain, '-map', last,
                 '-t', str(VIDEO_MAX_SECONDS),
                 '-loop', '0', '-an', '-fps_mode', 'passthrough',
-                '-c:v', 'libwebp', '-quality', str(quality), '-compression_level', '6',
+                '-c:v', 'libwebp_anim', '-quality', str(quality), '-compression_level', '6',
                 dst,
             ])
             out = open(dst, 'rb').read()
-            if len(out) <= WA_ANIMATED_MAX_BYTES:
-                break
-        return out
+            try:
+                validate_webp(out)
+                return out
+            except ValueError:
+                continue
+        raise ValueError('Impossible de compresser cette animation aux normes WhatsApp. Essaie un extrait plus simple.')
 
 
 def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark: str = '', color: str = DEFAULT_COLOR) -> bytes:
@@ -286,16 +296,64 @@ def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark:
     # WhatsApp exige exactement 512x512 : le format original devient carre
     if shape == SHAPE_ORIGINAL:
         shape = SHAPE_SQUARE
-    if suffix in ('.webm', '.mp4', '.gif'):
+    is_animated_image = False
+    if suffix not in ('.webm', '.mp4'):
+        with Image.open(BytesIO(data)) as source:
+            is_animated_image = getattr(source, 'n_frames', 1) > 1
+    if is_animated_image:
+        return animated_image_to_wa(data, shape, watermark, color)
+    if suffix in ('.webm', '.mp4'):
         return any_to_animated_webp(data, suffix, shape, watermark, color)
     im = Image.open(BytesIO(data)).convert('RGBA')
     im = draw_watermark(_apply_shape(im, shape), watermark, shape, color)
     out = b''
     # WhatsApp refuse les stickers statiques de plus de 100 Ko
-    for quality in (85, 70, 55, 40, 25, 10):
-        buf = BytesIO()
-        im.save(buf, 'WEBP', quality=quality, method=6)
-        out = buf.getvalue()
-        if len(out) <= WA_STATIC_MAX_BYTES:
-            break
-    return out
+    for size in (512, 448, 384, 256):
+        canvas = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+        detail = im.resize((size, size), Image.LANCZOS)
+        canvas.alpha_composite(detail, ((512 - size) // 2, (512 - size) // 2))
+        for quality in (85, 70, 55, 40, 25, 10, 1):
+            buf = BytesIO()
+            canvas.save(buf, 'WEBP', quality=quality, method=6)
+            out = buf.getvalue()
+            if len(out) <= WA_STATIC_MAX_BYTES:
+                validate_webp(out)
+                return out
+    raise ValueError('Impossible de compresser cette image aux normes WhatsApp.')
+
+
+def animated_image_to_wa(data, shape, watermark, color):
+    """Pillow decodes animated WebP/GIF; FFmpeg cannot reliably decode ANIM WebP."""
+    frames, durations = [], []
+    elapsed = 0
+    with Image.open(BytesIO(data)) as source:
+        for index in range(source.n_frames):
+            source.seek(index)
+            duration = max(8, int(source.info.get('duration', 100)))
+            duration = min(duration, 3000 - elapsed)
+            if duration < 8:
+                break
+            frame = source.convert('RGBA')
+            frame = draw_watermark(_apply_shape(frame, shape), watermark, shape, color)
+            frames.append(frame)
+            durations.append(duration)
+            elapsed += duration
+            if elapsed >= 3000:
+                break
+    for size, quality, stride in ((512, 70, 1), (512, 40, 1), (448, 20, 2), (384, 10, 3), (256, 1, 4)):
+        sampled, timing = [], []
+        for index in range(0, len(frames), stride):
+            frame = frames[index].resize((size, size), Image.LANCZOS)
+            canvas = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+            canvas.alpha_composite(frame, ((512 - size) // 2, (512 - size) // 2))
+            sampled.append(canvas)
+            timing.append(sum(durations[index:index + stride]))
+        out = BytesIO()
+        sampled[0].save(out, 'WEBP', save_all=True, append_images=sampled[1:],
+                        duration=timing, loop=0, quality=quality, method=6)
+        try:
+            validate_webp(out.getvalue())
+            return out.getvalue()
+        except ValueError:
+            continue
+    raise ValueError('Impossible de compresser cette animation aux normes WhatsApp.')

@@ -13,7 +13,8 @@ Bot Telegram qui crée des packs de stickers à partir de **photos, vidéos, GIF
 - ⌨️ **Reply keyboard** (boutons sous le clavier) + boutons inline
 - 🔗 Boutons `/start` : contacter le créateur, la chaîne, le groupe
 - 🟢 Export **Telegram → WhatsApp** (`.wastickers`, découpage automatique en fichiers de 30)
-- 🌈 Création de **thèmes Telegram** (`.attheme`, Android + iPhone) : les couleurs du thème (fonds, écritures, bulles, vocaux...) sont extraites de la photo envoyée, qui devient aussi le fond d'écran
+- 🌈 Création de **thèmes Telegram Android** (`.attheme`) : couleurs des fonds, écritures, bulles et vocaux extraites de la photo, intégrée comme fond avec les marqueurs Telegram `WPS`/`WPE`. Le format `.attheme` ne s’applique pas sur iPhone ; un thème iOS ou cloud distinct serait nécessaire.
+- ✅ Contrôle des fichiers WhatsApp avant envoi : WebP décodable 512×512, statique ≤100 Ko, animé ≤500 Ko, durée ≤10 s et images ≥8 ms ; icône PNG 96×96 ≤50 Ko, packs homogènes de 3–30 stickers. Un média isolé est répété trois fois pour rester importable.
 - 🏆 **Classement** des créateurs (packs & stickers)
 - 🛡 Commandes **admin** : `/admin`, `/stats`, `/broadcast`, `/ban`, `/unban`
 
