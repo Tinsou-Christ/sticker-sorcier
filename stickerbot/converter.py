@@ -300,7 +300,9 @@ def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark:
     if suffix not in ('.webm', '.mp4'):
         with Image.open(BytesIO(data)) as source:
             is_animated_image = getattr(source, 'n_frames', 1) > 1
-    if suffix in ('.webm', '.mp4', '.gif') or is_animated_image:
+    if is_animated_image:
+        return animated_image_to_wa(data, shape, watermark, color)
+    if suffix in ('.webm', '.mp4'):
         return any_to_animated_webp(data, suffix, shape, watermark, color)
     im = Image.open(BytesIO(data)).convert('RGBA')
     im = draw_watermark(_apply_shape(im, shape), watermark, shape, color)
@@ -318,3 +320,40 @@ def to_wa_webp(data: bytes, suffix: str, shape: str = SHAPE_ORIGINAL, watermark:
                 validate_webp(out)
                 return out
     raise ValueError('Impossible de compresser cette image aux normes WhatsApp.')
+
+
+def animated_image_to_wa(data, shape, watermark, color):
+    """Pillow decodes animated WebP/GIF; FFmpeg cannot reliably decode ANIM WebP."""
+    frames, durations = [], []
+    elapsed = 0
+    with Image.open(BytesIO(data)) as source:
+        for index in range(source.n_frames):
+            source.seek(index)
+            duration = max(8, int(source.info.get('duration', 100)))
+            duration = min(duration, 3000 - elapsed)
+            if duration < 8:
+                break
+            frame = source.convert('RGBA')
+            frame = draw_watermark(_apply_shape(frame, shape), watermark, shape, color)
+            frames.append(frame)
+            durations.append(duration)
+            elapsed += duration
+            if elapsed >= 3000:
+                break
+    for size, quality, stride in ((512, 70, 1), (512, 40, 1), (448, 20, 2), (384, 10, 3), (256, 1, 4)):
+        sampled, timing = [], []
+        for index in range(0, len(frames), stride):
+            frame = frames[index].resize((size, size), Image.LANCZOS)
+            canvas = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+            canvas.alpha_composite(frame, ((512 - size) // 2, (512 - size) // 2))
+            sampled.append(canvas)
+            timing.append(sum(durations[index:index + stride]))
+        out = BytesIO()
+        sampled[0].save(out, 'WEBP', save_all=True, append_images=sampled[1:],
+                        duration=timing, loop=0, quality=quality, method=6)
+        try:
+            validate_webp(out.getvalue())
+            return out.getvalue()
+        except ValueError:
+            continue
+    raise ValueError('Impossible de compresser cette animation aux normes WhatsApp.')
