@@ -75,6 +75,15 @@ def remove() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
+def convert_choice(set_name=None) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton('🧩 Ce sticker seulement', callback_data='wa_one')]]
+    if set_name:
+        # Store the name in user_data: Telegram limits callback_data to 64 bytes.
+        rows.append([InlineKeyboardButton('📦 Tout le pack', callback_data='wa_pack')])
+    rows.append([InlineKeyboardButton('🚫 Annuler', callback_data='wa_no')])
+    return InlineKeyboardMarkup(rows)
+
+
 def start_links() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
